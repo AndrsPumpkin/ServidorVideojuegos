@@ -28,6 +28,21 @@ def set_cell_shading(cell, fill):
     shd.set(qn("w:fill"), fill)
 
 
+def set_paragraph_callout(paragraph, fill, border):
+    p_pr = paragraph._p.get_or_add_pPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:fill"), fill)
+    p_pr.append(shd)
+    borders = OxmlElement("w:pBdr")
+    left = OxmlElement("w:left")
+    left.set(qn("w:val"), "single")
+    left.set(qn("w:sz"), "18")
+    left.set(qn("w:space"), "8")
+    left.set(qn("w:color"), border)
+    borders.append(left)
+    p_pr.append(borders)
+
+
 def set_cell_margins(cell, top=90, start=110, bottom=90, end=110):
     tc = cell._tc
     tc_pr = tc.get_or_add_tcPr()
@@ -338,9 +353,20 @@ def parse_markdown(document, markdown):
             continue
         if stripped.startswith(">"):
             quote_lines = []
+            callout_kind = None
             while index < len(lines) and lines[index].strip().startswith(">"):
                 value = lines[index].strip().lstrip(">").strip()
-                value = re.sub(r"^\[!(IMPORTANT|NOTE|WARNING|CAUTION)\]\s*", lambda m: m.group(1).title() + ". ", value)
+                marker = re.match(r"^\[!(IMPORTANT|NOTE|WARNING|CAUTION|CONCEPT)\]\s*", value)
+                if marker:
+                    callout_kind = marker.group(1)
+                    labels = {
+                        "IMPORTANT": "Importante. ",
+                        "NOTE": "Nota. ",
+                        "WARNING": "Advertencia. ",
+                        "CAUTION": "Precaución. ",
+                        "CONCEPT": "Concepto clave. ",
+                    }
+                    value = re.sub(r"^\[!(IMPORTANT|NOTE|WARNING|CAUTION|CONCEPT)\]\s*", labels[callout_kind], value)
                 quote_lines.append(value)
                 index += 1
             paragraph = document.add_paragraph()
@@ -351,6 +377,12 @@ def parse_markdown(document, markdown):
             add_inline(paragraph, " ".join(quote_lines))
             if paragraph.runs:
                 paragraph.runs[0].bold = True
+            if callout_kind == "CONCEPT":
+                set_paragraph_callout(paragraph, "EEF5FB", "2F75B5")
+            elif callout_kind in {"WARNING", "CAUTION"}:
+                set_paragraph_callout(paragraph, "FFF4E5", "C55A11")
+            else:
+                set_paragraph_callout(paragraph, "F4F6F7", "7F8C8D")
             keep_lines(paragraph)
             continue
         list_match = re.match(r"^[-*]\s+(.*)", stripped)
@@ -386,8 +418,8 @@ def main():
     document = Document()
     setup_styles(document)
     section = document.sections[0]
-    section.page_width = Cm(21)
-    section.page_height = Cm(29.7)
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
     section.top_margin = Cm(2.0)
     section.bottom_margin = Cm(1.8)
     section.left_margin = Cm(2.15)

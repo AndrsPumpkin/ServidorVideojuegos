@@ -119,9 +119,67 @@ Infrastructure
 └── Scripts de instalación y construcción para estudio
 ```
 
+### 3.4 Qué contiene cada carpeta
+
+El repositorio está organizado para que el estudiante pueda separar el gameplay común de las dos tecnologías de red.
+
+| Carpeta | Qué contiene | Por qué debe observarla |
+|---|---|---|
+| `Assets/Input` | El asset `LocalPlayers.inputactions` | Define acciones y bindings sin escribir teclas en el controlador |
+| `Assets/Scenes` | Baseline, escena NGO, escena NFE y SubScene | Permite estudiar cada arquitectura por separado |
+| `Assets/Prefabs` | Los Players preparados para NGO y NFE | Muestra cómo cada stack representa un jugador de red |
+| `Assets/Scripts/Player` | Input y movimiento local | Es la referencia de comportamiento que las versiones de red deben conservar |
+| `Assets/Scripts/PowerUp` | Activación y evento común | Separa la acción de gameplay de su presentación |
+| `Assets/Scripts/UI` | Mensaje visible durante dos segundos | Recibe el evento sin conocer si nació localmente o en la red |
+| `Assets/Scripts/NGO` | Conexión y Player basado en GameObjects | Punto de partida de las actividades NGO |
+| `Assets/Scripts/NFE` | Bootstrap, componentes ECS, sistemas y presentación | Punto de partida de las actividades NFE |
+| `Infrastructure` | Dockerfiles, scripts y manifiestos Agones | Material que utilizará el estudiante después de generar el servidor |
+| `Docs` | Fuente Markdown y guía Word | Instrucciones oficiales del laboratorio |
+
+Las carpetas `Library`, `Temp`, `Logs` y `Builds` no forman parte del material fuente. Unity o el estudiante las generan localmente y Git las ignora.
+
+### 3.5 Escenas que recibe el estudiante
+
+#### LocalGameplayBaseline
+
+**Ruta:** `Assets/Scenes/LocalGameplayBaseline.unity`.
+
+Esta escena demuestra el comportamiento que debe conservarse. Sus GameObjects principales son `Ground`, `Main Camera`, `UI`, `EventSystem` y `Player 1` a `Player 4`. Al presionar Play, los cuatro Players comparten el mismo teclado. No existe conexión de red en esta escena.
+
+**Qué observar:** cada cápsula tiene color y nombre; el movimiento permanece dentro del terreno; el PowerUp muestra el jugador correcto y desaparece aproximadamente después de dos segundos.
+
+#### NGOGameplay
+
+**Ruta:** `Assets/Scenes/NGOGameplay.unity`.
+
+La escena presenta el enfoque basado en GameObjects. Contiene `NetworkManager`, `UnityTransport`, una cámara, terreno, UI y el panel de conexión. El `NetworkManager` conoce `NGOPlayer.prefab` y puede iniciar Server, Host o Client. El movimiento autoritativo y el PowerUp distribuido permanecen incompletos de forma deliberada.
+
+**Qué observar:** los campos Address y Port, el estado de conexión, los botones y los componentes de `NGOPlayer.prefab`.
+
+#### NFEGameplay y NFEGameplaySubScene
+
+**Rutas:** `Assets/Scenes/NFEGameplay.unity` y `Assets/Scenes/NFE/NFEGameplaySubScene.unity`.
+
+La escena principal contiene la cámara, la UI, el panel de conexión y `NfePresentationBridge`. La SubScene contiene `NfePlayerSpawnerAuthoring` y la referencia al Ghost prefab. Unity convierte el contenido de la SubScene en Entities para los Worlds de NetCode.
+
+**Qué observar:** la escena principal presenta información; la SubScene prepara los datos ECS. `NFEPlayer.prefab` no se controla como un Player GameObject tradicional durante la simulación.
+
+### 3.6 Estado funcional confirmado
+
+| Área | Estado | Explicación |
+|---|---|---|
+| Baseline Input movimiento PowerUp UI | IMPLEMENTED | Es la referencia local completa |
+| NGO conexión identidad prefab y transporte | IMPLEMENTED | La infraestructura fundamental está preparada |
+| NGO movimiento de red y PowerUp de red | PARTIAL | Corresponde a NGO-01 a NGO-03 |
+| NFE Worlds componentes Ghost e input base | IMPLEMENTED | La estructura ECS real está preparada |
+| NFE conexión spawn movimiento y PowerUp | PARTIAL | Corresponde a NFE-01 a NFE-04 |
+| Dedicated Server build | NOT IMPLEMENTED | Lo genera el estudiante |
+| VM container Kubernetes Agones GameServer | NOT IMPLEMENTED | Pasos de laboratorio no ejecutados |
+| Address y Port editables | IMPLEMENTED | NGO usa 7979 y NFE 7980 como valores iniciales |
+
 ## 4. Gameplay local ya implementado
 
-Abra `Assets/Scenes/LocalGameplayBaseline.unity` y presione Play. La escena contiene plano, cámara, UI y cuatro jugadores.
+El baseline es el punto de partida porque utiliza conceptos que el estudiante ya conoce: escena, GameObject, componente, script y Play Mode. Antes de estudiar la red, ejecute `Assets/Scenes/LocalGameplayBaseline.unity` y confirme el comportamiento.
 
 | Jugador | Movimiento | PowerUp |
 |---|---|---|
@@ -130,68 +188,267 @@ Abra `Assets/Scenes/LocalGameplayBaseline.unity` y presione Play. La escena cont
 | Player 3 | I J K L | O |
 | Player 4 | Numpad 8 4 5 6 | Numpad 0 |
 
-`LocalPlayers.inputactions` contiene cuatro Action Maps. `PlayerInputSource` traduce las acciones a movimiento y evento; `PlayerController` mueve sin conocer teclas; `PlayerPowerUp` publica en `PowerUpEvents`; `PowerUpMessageUI` muestra el mensaje durante unos dos segundos.
+### 4.1 Input System en palabras sencillas
+
+Una **Input Action** describe una intención del jugador, por ejemplo `Move` o `PowerUp`. Un **binding** relaciona esa intención con una tecla concreta. Esta separación permite cambiar WASD por otras teclas sin reescribir el movimiento.
+
+`Assets/Input/LocalPlayers.inputactions` contiene cuatro Action Maps. Cada mapa representa un jugador local y contiene las mismas acciones con bindings distintos.
 
 ```text
-Input System
-├── Move ───────► PlayerController ─► Transform local
-└── PowerUp ────► PlayerPowerUp ────► PowerUpEvents ─► UI
+Tecla física
+    ↓ binding
+Input Action Move o PowerUp
+    ↓ lectura del script
+Gameplay
 ```
 
-Esta separación es la referencia observable para NGO y NFE.
+### 4.2 PlayerInputSource
+
+#### Para qué sirve
+
+Este script traduce Input System a datos sencillos que el gameplay puede consumir. Está en `Assets/Scripts/Player/PlayerInputSource.cs` y se utiliza en cada Player del baseline.
+
+#### Información que guarda
+
+Guarda el `InputActionAsset`, el nombre del Action Map y referencias resueltas a `Move` y `PowerUp`. No guarda una tecla específica dentro del código.
+
+#### Acciones principales
+
+```csharp
+public Vector2 Movement => moveAction?.ReadValue<Vector2>() ?? Vector2.zero;
+public event Action PowerUpPressed;
+```
+
+`Movement` produce una dirección bidimensional. `PowerUpPressed` avisa que la acción ocurrió. El script no mueve la cápsula ni modifica la UI; esa separación permite reutilizar el gameplay con diferentes fuentes de input.
+
+### 4.3 PlayerController
+
+#### Para qué sirve
+
+`Assets/Scripts/Player/PlayerController.cs` transforma la dirección recibida en desplazamiento sobre el plano. El componente está en los cuatro Players locales.
+
+#### Qué ocurre en Play Mode
+
+En cada frame lee `PlayerInputSource.Movement`, limita su magnitud, calcula un desplazamiento usando velocidad y tiempo, y mantiene la posición dentro de los límites del terreno.
+
+```text
+Teclado
+  ↓
+Input System
+  ↓
+PlayerInputSource.Movement
+  ↓
+PlayerController
+  ↓
+Transform.position local
+```
+
+El controlador no conoce NGO, NFE, ownership ni RPC. En las escenas de red, ese mismo problema se divide entre cliente y servidor.
+
+### 4.4 PlayerPowerUp y PowerUpEvents
+
+`Assets/Scripts/PowerUp/PlayerPowerUp.cs` escucha `PowerUpPressed`. Cuando se activa, llama `ActivatePowerUp` y publica el nombre del jugador mediante `PowerUpEvents`.
+
+`Assets/Scripts/PowerUp/PowerUpEvents.cs` es un canal de eventos común:
+
+```csharp
+public static event Action<string> Activated;
+```
+
+El evento no sabe si la activación vino del teclado local, de un RPC NGO o de una entidad RPC NFE. Esto permite conservar la UI mientras cambia el origen de la información.
+
+### 4.5 PowerUpMessageUI
+
+`Assets/Scripts/UI/PowerUpMessageUI.cs` se suscribe a `PowerUpEvents.Activated`. Escribe `Player N activated PowerUp`, reinicia el temporizador si llega otro evento y borra el texto aproximadamente dos segundos después.
+
+```text
+PowerUp Input
+    ↓
+PlayerPowerUp.ActivatePowerUp
+    ↓
+PowerUpEvents.Activated
+    ↓
+PowerUpMessageUI
+```
+
+**Problema que resolverá la red:** este evento existe inicialmente dentro de un solo proceso. Cuando haya varios clientes, el servidor deberá comunicar el resultado para que cada proceso publique el mismo evento local de UI.
+
+> [!CONCEPT]
+> CONCEPTO CLAVE  Estado compartido. En palabras sencillas, varios procesos deben representar el mismo resultado del juego. En esta práctica, el servidor decide el movimiento aceptado y qué Player activó PowerUp; los clientes presentan esa decisión.
+
+[CAPTURA SUGERIDA: escena LocalGameplayBaseline en Play Mode con los cuatro Players y el mensaje de PowerUp]
 
 ## 5. Base NGO incluida
 
-### 5.1 Escena y componentes
+NGO es la solución de networking de Unity basada en la forma tradicional de trabajar con GameObjects y Components. El starter incluye la estructura suficiente para estudiar la arquitectura sin resolver las tres actividades centrales.
 
-`NGOGameplay.unity` contiene `NetworkManager`, `UnityTransport`, el prefab registrado `NGOPlayer.prefab` y un panel de conexión. `NgoConnectionUI` acepta Address y Port, permite Server, Host, Client y Shutdown, y usa UDP 7979 como valor inicial. En batch mode inicia servidor; `-client`, `-address` y `-port` permiten configurar un cliente desde línea de comandos.
+### 5.1 Conceptos antes de abrir la escena
 
-`NGOPlayer.prefab` incluye `NetworkObject`, `NetworkTransform` y `NgoPlayerNetwork`. La identidad se replica con `NetworkVariable<int> playerNumber`. El servidor asigna Player 1 a Player 4, cambia etiqueta y color, y coloca el objeto en una posición inicial.
+> [!CONCEPT]
+> CONCEPTO CLAVE  Cliente y servidor. Un cliente lee input y presenta el juego. El servidor acepta conexiones, valida acciones y mantiene el estado compartido. Ambos son ejecuciones distintas del proyecto.
 
-### 5.2 Qué falta
+- **NetworkManager:** coordina el inicio de Server, Host o Client y registra prefabs de red.
+- **UnityTransport:** envía y recibe los paquetes UDP utilizados por NGO.
+- **NetworkObject:** da identidad de red a un GameObject.
+- **NetworkBehaviour:** permite que un componente conozca si corre como cliente, servidor u owner y utilice APIs de red.
+- **Ownership:** indica qué cliente puede originar el input de un objeto.
+- **RPC:** llamada que cruza procesos; no es una llamada local ordinaria.
+- **NetworkTransform:** replica a clientes el Transform decidido por la autoridad configurada.
 
-La UI y el transporte están preparados, pero el movimiento autoritativo y el PowerUp por RPC son ejercicios. La vista previa local permite comprobar input antes de completar la red; no debe confundirse con sincronización terminada.
+### 5.2 NgoConnectionUI
+
+#### Para qué sirve y dónde está
+
+`Assets/Scripts/NGO/NgoConnectionUI.cs` está en la UI de `NGOGameplay.unity`. Es el punto visible donde el estudiante escribe Address y Port e inicia Server, Host o Client.
+
+#### Información que guarda
+
+Mantiene referencias a los `InputField` de Address y Port, al texto de estado y al texto del cliente local. Obtiene `NetworkManager.Singleton` en `Awake`.
+
+#### Código relevante
+
+```csharp
+transport.SetConnectionData(address, ReadPort(), server ? "0.0.0.0" : null);
+```
+
+Para un cliente, `address` identifica la máquina del servidor y `ReadPort()` identifica el servicio UDP. Para el servidor, `0.0.0.0` significa escuchar en todas sus interfaces disponibles. El valor inicial es UDP 7979.
+
+`StartServer`, `StartHost`, `ConnectClient` y `Shutdown` ya están implementados. También se admiten `-address`, `-port` y `-client` desde línea de comandos. El estudiante no debe reescribir esta UI para completar los TODO.
+
+### 5.3 NGOPlayer prefab
+
+`Assets/Prefabs/NGOPlayer.prefab` contiene representación visual, `NetworkObject`, `NetworkTransform` y `NgoPlayerNetwork`. `NetworkObject` permite que el servidor cree una instancia y que NGO relacione sus copias en todos los clientes.
+
+### 5.4 NgoPlayerNetwork
+
+#### Para qué sirve y dónde se utiliza
+
+`Assets/Scripts/NGO/NgoPlayerNetwork.cs` hereda de `NetworkBehaviour` y está en `NGOPlayer.prefab`. Reúne identidad, lectura del input del owner y puntos de extensión de movimiento y PowerUp.
+
+#### Información importante
+
+```csharp
+private readonly NetworkVariable<int> playerNumber = new(
+    0,
+    NetworkVariableReadPermission.Everyone,
+    NetworkVariableWritePermission.Server);
+```
+
+Todos pueden leer `playerNumber`, pero solo el servidor puede escribirlo. En `OnNetworkSpawn`, el servidor asigna un número, posición inicial, etiqueta y color. El cliente owner habilita el Action Map `Player 1`, que representa el input de ese proceso cliente.
+
+#### Flujo al ejecutar
 
 ```text
-Owner lee input
-    │            NGO 01 pendiente
-    ▼
-Server RPC recibe input
-    │            NGO 02 pendiente
-    ▼
-Servidor mueve NetworkTransform
-    │
-    ▼
-Clientes observan el estado
+NetworkManager crea NGOPlayer
+    ↓
+Servidor asigna playerNumber
+    ↓
+Owner habilita input
+    ↓
+NGO-01 envía dirección
+    ↓
+NGO-02 mueve en servidor
+    ↓
+NetworkTransform replica
 ```
+
+#### Qué ya está implementado
+
+Identidad, permisos de `NetworkVariable`, spawn position, input del owner, RPC receptor `SubmitMoveRpc`, límites, vista previa local y presentación.
+
+#### Qué completa el estudiante
+
+`NGO-01` invoca el RPC con el input; `NGO-02` aplica movimiento autoritativo en servidor; `NGO-03` sustituye la vista previa local de PowerUp por solicitud y broadcast.
+
+> [!CONCEPT]
+> CONCEPTO CLAVE  Ownership. Ser owner permite a un cliente originar el input de su Player. No significa que pueda decidir cualquier posición válida; el servidor conserva la decisión autoritativa.
+
+[CAPTURA SUGERIDA: Inspector del GameObject NetworkManager y lista Network Prefabs en NGOGameplay]
 
 ## 6. Base NFE incluida
 
-### 6.1 ECS real
+NFE resuelve el mismo laboratorio usando ECS. Para partir de algo conocido, un GameObject reúne datos y comportamiento en Components. En ECS, una Entity es un identificador; los Components contienen datos y los Systems procesan conjuntos de Entities.
 
-`NfeBootstrap` crea ClientWorld y ServerWorld solo en la escena NFE o con `-nfe`. `NfePlayerAuthoring` y su Baker producen una Entity con `NfePlayerTag`, `NfePlayerState` y `NfePlayerInput`. `NfePlayerState` replica `PlayerNumber` y `Position` mediante `GhostField`. `NfePlayerInput` implementa `IInputComponentData` y contiene movimiento más un `InputEvent` de PowerUp.
+### 6.1 Conceptos ECS en palabras sencillas
 
-`NFEPlayer.prefab` tiene `GhostAuthoring`, modo Owner Predicted, owner habilitado y auto command target. La SubScene contiene `NfePlayerSpawnerAuthoring`. `NfePresentationBridge` crea cápsulas GameObject únicamente para presentar el estado ECS; la autoridad y la simulación deben permanecer en componentes y sistemas ECS.
+- **Entity:** identificador ligero de un elemento del juego.
+- **Component:** datos asociados a una Entity. No es el mismo tipo de componente MonoBehaviour.
+- **System:** código que consulta y modifica entidades con componentes concretos.
+- **World:** conjunto aislado de entidades y sistemas. NFE utiliza ClientWorld y ServerWorld.
+- **Ghost:** entidad cuya información NetCode replica entre servidor y clientes.
+- **Snapshot:** representación del estado de Ghost enviada desde servidor.
+- **Input command:** input del cliente asociado a ticks de simulación.
 
-### 6.2 Flujo que debe completar el estudiante
+> [!CONCEPT]
+> CONCEPTO CLAVE  World. ClientWorld y ServerWorld pueden existir en el mismo Editor para pruebas, pero representan responsabilidades distintas. En un Dedicated Server solo debe existir el mundo servidor.
 
-```text
-NfeConnectionUI
-    │ NFE 01
-    ▼
-NetworkStreamDriver Listen y Connect
-    │ NFE 02
-    ▼
-GoInGame RPC y spawn de Ghost con GhostOwner
-    │ NFE 03
-    ▼
-InputComponentData y PredictedSimulationSystemGroup
-    │ NFE 04
-    ▼
-PowerUp RPC del servidor a clientes
+### 6.2 NfeBootstrap
+
+`Assets/Scripts/NFE/NfeBootstrap.cs` decide qué Worlds crear. Solo activa NFE si la escena comienza por `NFE` o si la línea de comandos contiene `-nfe`. Un proceso con `-client` crea ClientWorld; batch mode crea ServerWorld; el Editor normal crea ambos para pruebas locales.
+
+`AutoConnectPort = 0` evita una conexión automática oculta. Por eso `NfeConnectionUI` es responsable de iniciar Listen o Connect de forma explícita.
+
+### 6.3 NfeComponents
+
+`Assets/Scripts/NFE/NfeComponents.cs` define los datos principales:
+
+```csharp
+public struct NfePlayerState : IComponentData
+{
+    [GhostField] public int PlayerNumber;
+    [GhostField(Quantization = 1000)] public float2 Position;
+}
+
+public struct NfePlayerInput : IInputComponentData
+{
+    public float2 Move;
+    public InputEvent PowerUp;
+}
 ```
 
-NFE usa UDP 7980 como valor inicial para evitar mezclar accidentalmente los dos stacks durante las pruebas.
+`GhostField` indica datos que deben aparecer en snapshots. La cuantización representa posición con una precisión definida en lugar de enviar precisión ilimitada. `IInputComponentData` identifica datos enviados como input de predicción.
+
+`NfePlayerAuthoring` y su Baker convierten `NFEPlayer.prefab` en una Entity. `NfePlayerSpawnerAuthoring` convierte la referencia al prefab en `NfePlayerSpawner` dentro de la SubScene.
+
+### 6.4 NfeConnectionUI
+
+`Assets/Scripts/NFE/NfeConnectionUI.cs` está en `NFEGameplay.unity`. Prepara Address y UDP 7980, localiza ClientWorld o ServerWorld y muestra el `NetworkId` cuando existe conexión.
+
+La creación del endpoint ya está implementada:
+
+```csharp
+NetworkEndpoint endpoint = NetworkEndpoint.Parse(addressInput.text.Trim(), ReadPort());
+```
+
+`NFE-01` completa las llamadas reales a `NetworkStreamDriver.Listen` y `Connect`. Esta actividad existe porque crear un endpoint no abre por sí mismo un socket ni establece una conexión.
+
+### 6.5 NfeGameplaySystems
+
+`Assets/Scripts/NFE/NfeGameplaySystems.cs` contiene sistemas separados por responsabilidad y World.
+
+- `NfeRpcRegistrationSystem` habilita el registro dinámico de los RPC del starter.
+- `NfeGoInGameClientSystem` y `NfeGoInGameServerSystem` forman `NFE-02`.
+- `NfeGatherInputSystem` ya lee WASD y Space en el ClientWorld owner.
+- `NfeMovementSystem` es el punto de `NFE-03` dentro de `PredictedSimulationSystemGroup`.
+- `NfePowerUpServerSystem` y `NfePowerUpClientSystem` forman `NFE-04`.
+
+```text
+ClientWorld reúne NfePlayerInput
+    ↓ comandos por tick
+ServerWorld simula y actualiza NfePlayerState
+    ↓ snapshots del Ghost
+ClientWorld recibe estado
+```
+
+### 6.6 NfePresentationBridge
+
+`Assets/Scripts/NFE/NfePresentationBridge.cs` lee `NfePlayerState` y crea cápsulas y etiquetas GameObject para que el estudiante vea el estado ECS. Esta presentación no sustituye la Entity ni ejecuta la autoridad de gameplay. Es un puente visual apropiado para un laboratorio sencillo.
+
+### 6.7 Qué completa el estudiante
+
+`NFE-01` abre y conecta endpoints; `NFE-02` entra en juego, hace spawn y asigna `GhostOwner`; `NFE-03` mueve en la simulación predicha; `NFE-04` comunica PowerUp mediante RPC Entities.
+
+[CAPTURA SUGERIDA: Entities Hierarchy mostrando ClientWorld ServerWorld y un Ghost con GhostOwner]
 
 ## 7. Comparación de las bases
 
@@ -223,67 +480,286 @@ Existen exactamente siete identificadores `STUDENT TODO`. Cada actividad siguien
 **OBJETIVO:** enviar el Vector2 del cliente propietario al servidor.
 **ARCHIVO:** `Assets/Scripts/NGO/NgoPlayerNetwork.cs`.
 **COMPONENTE:** método `Update` y RPC `SubmitMoveRpc`.
-**PASOS:** después de leer y limitar `move`, invoque `SubmitMoveRpc(move)`. Mantenga `RpcDelivery.Unreliable` porque el siguiente input reemplaza al anterior.
+**IDEA:** un cliente puede afirmar cualquier posición. Por eso no transmite su `Transform`; transmite la intención de movimiento. La autoridad para decidir la posición queda en el servidor.
+
+**ANTES:** `Update` ya obtiene y limita `move`, pero no lo envía.
+
+**ESCRIBA/MODIFIQUE:** después de calcular `move`, añada una sola línea.
+
+```csharp
+SubmitMoveRpc(move);
+```
+
+`SubmitMoveRpc` ya tiene `[Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable, InvokePermission = RpcInvokePermission.Owner)]`.
+
+- `SendTo.Server` cruza del proceso cliente al proceso servidor.
+- `InvokePermission.Owner` impide que otro cliente invoque el RPC de un `NetworkObject` ajeno.
+- `Unreliable` es apropiado para input continuo: si un paquete se pierde, el siguiente input más reciente lo reemplaza. No es apropiado para un evento único como PowerUp.
+- El servidor limita de nuevo el vector en el RPC: la red nunca reemplaza la validación.
+
+**VERIFIQUE:** inicie Host y un Client. Con un breakpoint o un log temporal en `SubmitMoveRpc`, confirme que el método se ejecuta en el servidor y que el valor recibido coincide con la dirección pulsada. Retire logs por frame antes de continuar.
 **RESULTADO ESPERADO:** el servidor actualiza `pendingServerInput`.
-**VERIFICACIÓN:** un log temporal o el depurador confirma valores en servidor; elimine logs repetitivos al terminar.
 
 ### ACTIVIDAD STUDENT TODO NGO-02 Movimiento autoritativo
 
 **OBJETIVO:** mover solo en servidor y replicar el resultado.
 **ARCHIVO:** `Assets/Scripts/NGO/NgoPlayerNetwork.cs`.
 **COMPONENTE:** `FixedUpdate`, `pendingServerInput`, `NetworkTransform`.
-**PASOS:** valide y limite input, calcule desplazamiento con `moveSpeed` y tiempo fijo, aplique límites horizontales y actualice el Transform en servidor. Decida si conserva la vista previa local; explique el efecto visual.
+**IDEA:** el cliente pide; el servidor decide; `NetworkTransform` comparte la decisión. Mientras exista `ApplyLocalPreview`, el cliente owner verá una respuesta inmediata, pero el estado final sigue siendo el que replique el servidor.
+
+**ANTES:** `FixedUpdate` sale si no es servidor y contiene el TODO.
+
+**ESCRIBA/MODIFIQUE:** reemplace el TODO por este bloque.
+
+```csharp
+Vector2 move = Vector2.ClampMagnitude(pendingServerInput, 1f);
+Vector3 next = transform.position +
+    new Vector3(move.x, 0f, move.y) * (moveSpeed * Time.fixedDeltaTime);
+next.x = Mathf.Clamp(next.x, -horizontalBounds.x, horizontalBounds.x);
+next.z = Mathf.Clamp(next.z, -horizontalBounds.y, horizontalBounds.y);
+transform.position = next;
+```
+
+- `pendingServerInput` es la última intención aceptada del owner.
+- `ClampMagnitude` evita que una diagonal o un dato alterado supere velocidad 1.
+- `Time.fixedDeltaTime` hace que la simulación del servidor use el paso fijo de física.
+- Los dos `Mathf.Clamp` conservan los límites del baseline local.
+- Al escribir el `Transform` desde el servidor, el `NetworkTransform` del prefab replica la posición a los clientes.
+
+**VERIFIQUE:** abra Host y Client. Mueva el jugador del Client; ambas ventanas deben mostrar la misma posición final. Intente mantener una dirección contra el borde: el jugador no debe atravesarlo. Pruebe que un cliente no puede mover el jugador del otro.
 **RESULTADO ESPERADO:** todos los clientes observan la posición autoritativa.
-**VERIFICACIÓN:** mover un cliente y comparar las demás ventanas.
 
 ### ACTIVIDAD STUDENT TODO NGO-03 PowerUp por RPC
 
 **OBJETIVO:** sustituir el evento local por solicitud, validación y broadcast.
 **ARCHIVO:** `Assets/Scripts/NGO/NgoPlayerNetwork.cs`.
 **COMPONENTE:** `OnPowerUpPerformed` y nuevos RPC.
-**PASOS:** cree un RPC owner a servidor; valide que el objeto esté spawned y tenga identidad; desde servidor envíe un RPC a clientes; en cada cliente llame `PowerUpEvents.RaiseActivated` una sola vez.
+**IDEA:** PowerUp es un evento único. Debe usar entrega fiable y el servidor debe ser quien anuncie el resultado a todos los procesos.
+
+**ESCRIBA/MODIFIQUE:** sustituya el cuerpo de `OnPowerUpPerformed` y agregue estos dos métodos dentro de `NgoPlayerNetwork`.
+
+```csharp
+private void OnPowerUpPerformed(InputAction.CallbackContext context)
+{
+    RequestPowerUpRpc();
+}
+
+[Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
+private void RequestPowerUpRpc()
+{
+    if (!IsSpawned || playerNumber.Value <= 0)
+    {
+        return;
+    }
+
+    AnnouncePowerUpRpc(playerNumber.Value);
+}
+
+[Rpc(SendTo.Clients)]
+private void AnnouncePowerUpRpc(int number)
+{
+    PowerUpEvents.RaiseActivated($"Player {number}");
+}
+```
+
+- El owner solicita la acción; ya no actualiza directamente su UI.
+- La validación ocurre en el servidor, que es el único que ejecuta `RequestPowerUpRpc`.
+- El RPC de servidor a clientes transporta el número ya asignado por el servidor.
+- Cada cliente recibe `AnnouncePowerUpRpc` y publica su evento local para su propia `PowerUpMessageUI`.
+
+**VERIFIQUE:** conecte dos o más clientes. Pulse PowerUp solo en uno y observe un mensaje idéntico, una sola vez, en cada ventana; debe desaparecer tras dos segundos.
 **RESULTADO ESPERADO:** cuatro clientes muestran `Player N activated PowerUp` durante unos dos segundos.
-**VERIFICACIÓN:** un solo mensaje por pulsación, con el número asignado por servidor.
 
 ### ACTIVIDAD STUDENT TODO NFE-01 Listen y Connect
 
 **OBJETIVO:** abrir el endpoint del ServerWorld y conectar el ClientWorld.
 **ARCHIVO:** `Assets/Scripts/NFE/NfeConnectionUI.cs`.
 **COMPONENTE:** `StartServer` y `ConnectClient`.
-**PASOS:** obtenga `NetworkStreamDriver` del World correspondiente. En servidor llame `Listen(NetworkEndpoint.AnyIpv4.WithPort(ReadPort()))`. En cliente use el `endpoint` ya construido y `Connect(client.EntityManager, endpoint)`.
+**IDEA:** crear un `NetworkEndpoint` solo describe una dirección. `Listen` crea el socket del servidor y `Connect` inicia una conexión desde el cliente.
+
+**ESCRIBA/MODIFIQUE:** después del texto de estado, añada en cada método el bloque correspondiente.
+
+```csharp
+// StartServer
+server.EntityManager.GetComponentDataRW<NetworkStreamDriver>()
+    .ValueRW.Listen(NetworkEndpoint.AnyIpv4.WithPort(ReadPort()));
+
+// ConnectClient
+client.EntityManager.GetComponentDataRW<NetworkStreamDriver>()
+    .ValueRW.Connect(client.EntityManager, endpoint);
+```
+
+- `ServerWorld` y `ClientWorld` son entidades de ejecución distintas, aunque el editor pueda contener ambas.
+- `AnyIpv4` escucha en las interfaces IPv4 disponibles del proceso servidor.
+- `endpoint` usa Address y Port de la UI; en una VM, Address debe ser la IP Host-Only de Debian, no `127.0.0.1` del host.
+- `NetworkStreamDriver` es el componente que posee el transporte de NFE en ese World.
+
+**VERIFIQUE:** inicie Host. La UI debe mostrar un `Local client ID`; en Linux, `ss -lunp` debe mostrar UDP 7980 cuando el TODO de servidor esté activo.
 **RESULTADO ESPERADO:** aparece `NetworkId` en ClientWorld.
-**VERIFICACIÓN:** la UI muestra Local client ID y el puerto UDP 7980 aparece en escucha.
 
 ### ACTIVIDAD STUDENT TODO NFE-02 GoInGame y spawn
 
 **OBJETIVO:** marcar la conexión InGame y crear un Ghost con owner.
 **ARCHIVO:** `Assets/Scripts/NFE/NfeGameplaySystems.cs`.
 **COMPONENTE:** `NfeGoInGameClientSystem` y `NfeGoInGameServerSystem`.
-**PASOS:** el cliente añade `NetworkStreamInGame` y envía `NfeGoInGameRequest`. El servidor consume el RPC, marca la conexión, instancia `NfePlayerSpawner.PlayerPrefab`, asigna `GhostOwner.NetworkId`, fija `PlayerNumber` y vincula la entidad a la conexión.
+**IDEA:** estar conectado no significa estar jugando. `NetworkStreamInGame` habilita el flujo de Ghosts. El servidor crea el jugador y define quién es su dueño.
+
+**ESCRIBA/MODIFIQUE:** en el sistema cliente, para cada conexión sin `NetworkStreamInGame`, cree una entidad RPC y marque la conexión.
+
+```csharp
+EntityCommandBuffer ecb = new(Allocator.Temp);
+foreach (var (_, connection) in SystemAPI.Query<RefRO<NetworkId>>()
+             .WithEntityAccess().WithNone<NetworkStreamInGame>())
+{
+    ecb.AddComponent<NetworkStreamInGame>(connection);
+    Entity request = ecb.CreateEntity();
+    ecb.AddComponent(request, new NfeGoInGameRequest());
+    ecb.AddComponent(request, new SendRpcCommandRequest { TargetConnection = connection });
+}
+ecb.Playback(state.EntityManager);
+ecb.Dispose();
+```
+
+En el sistema servidor, use el mismo `EntityCommandBuffer` y el siguiente patrón. Antes del bucle, obtenga `Entity prefab = SystemAPI.GetSingleton<NfePlayerSpawner>().PlayerPrefab;` y `ComponentLookup<NetworkId> networkIds = state.GetComponentLookup<NetworkId>(true);`.
+
+```csharp
+foreach (var (request, rpcEntity) in SystemAPI
+             .Query<RefRO<ReceiveRpcCommandRequest>>()
+             .WithAll<NfeGoInGameRequest>().WithEntityAccess())
+{
+    Entity connection = request.ValueRO.SourceConnection;
+    int networkId = networkIds[connection].Value;
+    ecb.AddComponent<NetworkStreamInGame>(connection);
+    Entity player = ecb.Instantiate(prefab);
+    ecb.SetComponent(player, new GhostOwner { NetworkId = networkId });
+    ecb.SetComponent(player, new NfePlayerState { PlayerNumber = networkId });
+    ecb.AppendToBuffer(connection, new LinkedEntityGroup { Value = player });
+    ecb.DestroyEntity(rpcEntity);
+}
+```
+
+Actualice `networkIds` con `networkIds.Update(ref state);` antes del bucle. `AppendToBuffer` liga el Ghost a la conexión: NFE lo destruye cuando esa conexión desaparece.
+
+- El cliente solicita entrar; no crea su propio jugador de red.
+- `ReceiveRpcCommandRequest` informa al servidor qué conexión originó la solicitud.
+- `GhostOwner.NetworkId` permite que NFE añada `GhostOwnerIsLocal` solo en el cliente adecuado.
+- El número de jugador debe originarse en el servidor y formar parte de `NfePlayerState`, que ya está marcado con `GhostField`.
+
+**VERIFIQUE:** conecte dos clientes. Entities Hierarchy debe mostrar un Ghost por conexión, y cada cliente debe tener `GhostOwnerIsLocal` únicamente en su propio Ghost.
 **RESULTADO ESPERADO:** un Ghost distinto por conexión.
-**VERIFICACIÓN:** Entities Hierarchy muestra owner e identidad coherentes.
 
 ### ACTIVIDAD STUDENT TODO NFE-03 Movimiento predicho
 
 **OBJETIVO:** aplicar `NfePlayerInput.Move` dentro de la simulación predicha.
 **ARCHIVO:** `Assets/Scripts/NFE/NfeGameplaySystems.cs`.
 **COMPONENTE:** `NfeMovementSystem`.
-**PASOS:** consulte ghosts simulados, normalice el input, actualice `NfePlayerState.Position` con `DeltaTime` y aplique los límites del baseline. Mantenga el sistema en `PredictedSimulationSystemGroup`.
+**IDEA:** el owner predice para no esperar la respuesta de red. El servidor ejecuta la misma regla y el snapshot autoritativo corrige diferencias.
+
+**ESCRIBA/MODIFIQUE:** mantenga el sistema en `PredictedSimulationSystemGroup` y aplique este patrón.
+
+```csharp
+foreach (var (input, player) in SystemAPI
+             .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>>()
+             .WithAll<Simulate>())
+{
+    float2 move = math.normalizesafe(input.ValueRO.Move);
+    float2 next = player.ValueRO.Position + move * (5f * SystemAPI.Time.DeltaTime);
+    next.x = math.clamp(next.x, -10.5f, 10.5f);
+    next.y = math.clamp(next.y, -7.5f, 7.5f);
+    player.ValueRW.Position = next;
+}
+```
+
+- `Simulate` limita la consulta a Ghosts que este tick debe simular.
+- `IInputComponentData` hace disponible el mismo input para predicción y servidor.
+- Las velocidades y límites coinciden con `PlayerController` para que las dos versiones representen el mismo gameplay.
+- `GhostField` en `NfePlayerState` hace que el servidor envíe snapshots de esta posición.
+
+**VERIFIQUE:** conecte dos clientes. Cada persona solo controla su Ghost; ambos ven los movimientos converger y ningún Ghost puede salir del terreno.
 **RESULTADO ESPERADO:** cliente propietario predice y servidor confirma el estado.
-**VERIFICACIÓN:** las ventanas convergen en la misma posición y un no owner no controla el Ghost.
 
 ### ACTIVIDAD STUDENT TODO NFE-04 PowerUp RPC
 
 **OBJETIVO:** convertir el InputEvent en un resultado de servidor para todos los clientes.
 **ARCHIVO:** `Assets/Scripts/NFE/NfeGameplaySystems.cs`.
 **COMPONENTE:** `NfePowerUpServerSystem`, `NfePowerUpClientSystem` y `NfePowerUpResultRpc`.
-**PASOS:** el servidor detecta `PowerUp.IsSet`, crea un RPC por conexión con el `PlayerNumber`; el cliente consume el RPC, publica `PowerUpEvents` y destruye la entidad RPC recibida.
+**IDEA:** un `InputEvent` solo pide la acción. El servidor emite `NfePowerUpResultRpc`; cada cliente convierte ese resultado de red en su evento local de UI.
+
+**ANTES:** añada `using NetworkingLab.PowerUp;` al inicio del archivo para que el sistema cliente pueda publicar el evento común.
+
+**ESCRIBA/MODIFIQUE:** en servidor, consulte `NfePlayerInput` y `NfePlayerState`; cuando `PowerUp.IsSet`, cree una entidad con `NfePowerUpResultRpc` y `SendRpcCommandRequest`.
+
+```csharp
+EntityCommandBuffer ecb = new(Allocator.Temp);
+foreach (var (input, player) in SystemAPI
+             .Query<RefRO<NfePlayerInput>, RefRO<NfePlayerState>>()
+             .WithAll<Simulate>())
+{
+    if (!input.ValueRO.PowerUp.IsSet)
+    {
+        continue;
+    }
+
+    Entity rpc = ecb.CreateEntity();
+    ecb.AddComponent(rpc, new NfePowerUpResultRpc
+    {
+        PlayerNumber = player.ValueRO.PlayerNumber
+    });
+    ecb.AddComponent(rpc, new SendRpcCommandRequest
+    {
+        TargetConnection = Entity.Null,
+        BroadcastTargets = RpcBroadcastTargets.All
+    });
+}
+ecb.Playback(state.EntityManager);
+ecb.Dispose();
+```
+
+En el cliente, el consumo y limpieza es:
+
+```csharp
+EntityCommandBuffer ecb = new(Allocator.Temp);
+foreach (var (result, rpcEntity) in SystemAPI
+             .Query<RefRO<NfePowerUpResultRpc>>()
+             .WithAll<ReceiveRpcCommandRequest>().WithEntityAccess())
+{
+    PowerUpEvents.RaiseActivated($"Player {result.ValueRO.PlayerNumber}");
+    ecb.DestroyEntity(rpcEntity);
+}
+ecb.Playback(state.EntityManager);
+ecb.Dispose();
+```
+
+- El servidor decide el número incluido en el resultado; el cliente no lo inventa.
+- La entidad RPC es temporal: destruirla después de consumirla evita reproducir el mismo evento en el siguiente frame.
+- `PowerUpEvents` conserva el desacoplamiento con `PowerUpMessageUI`: la UI no necesita saber si el resultado nació en NGO o NFE.
+
+**VERIFIQUE:** pulse Espacio en un cliente. Cada ventana conectada debe mostrar una sola vez el mismo Player y limpiar el mensaje después de dos segundos.
 **RESULTADO ESPERADO:** UI idéntica en todos los clientes sin duplicados.
-**VERIFICACIÓN:** una pulsación produce un resultado por cliente y desaparece a los dos segundos.
+
+## Parte II Implementación del laboratorio por el estudiante
+
+Hasta aquí se explicó el proyecto entregado. A partir de este punto el estudiante prepara el entorno Linux, completa el networking y demuestra el resultado. Cada nueva herramienta resuelve un problema concreto:
+
+```text
+Unity Client
+    ↓ necesita otra ejecución que mantenga el estado
+Dedicated Server
+    ↓ debe ejecutarse en Linux aislado del host
+Debian en VirtualBox
+    ↓ debe empaquetarse de forma repetible
+Container
+    ↓ debe ser administrado
+Kubernetes
+    ↓ necesita funciones específicas de game server
+Agones GameServer
+```
+
+No avance solo porque un comando terminó. En cada etapa interprete el resultado y complete el checkpoint correspondiente.
 
 ## 9. Preparación de VirtualBox
 
-Una máquina virtual simula otro computador utilizando recursos del host. RAM, CPU y disco asignados a la VM dejan de estar disponibles total o parcialmente para el host mientras la VM está encendida.
+Nuestro servidor necesita Linux, pero no otro computador físico. Una máquina virtual permite ejecutar Debian dentro del host. El host es macOS o Windows; el guest es Debian; VirtualBox es el hipervisor que asigna CPU virtual, RAM, disco y adaptadores de red. Una máquina virtual simula otro computador utilizando recursos del host. RAM, CPU y disco asignados a la VM dejan de estar disponibles total o parcialmente para el host mientras la VM está encendida.
 
 VirtualBox es un hipervisor de escritorio. La descarga oficial es [Oracle VirtualBox Downloads](https://www.virtualbox.org/wiki/Downloads). La versión verificada al redactar esta guía fue 7.2.20. Use la última versión estable 7.2 disponible para el aula y no versiones Beta/RC.
 
@@ -297,6 +773,10 @@ VirtualBox es un hipervisor de escritorio. La descarga oficial es [Oracle Virtua
 
 No descargue `macOS / Intel hosts` para un iMac M4.
 
+[CAPTURA: página oficial de VirtualBox]
+
+[CAPTURA: selección macOS Apple Silicon]
+
 ### Windows — x86-64
 
 1. Descargue **Windows hosts**.
@@ -305,12 +785,14 @@ No descargue `macOS / Intel hosts` para un iMac M4.
 4. Acepte la interrupción breve de red que advierte el instalador.
 5. Abra VirtualBox y compruebe **Help > About VirtualBox**.
 
+[CAPTURA: selección Windows]
+
 
 ---
 
 ## 10. Descarga de Debian
 
-Debian estable verificado: **Debian 13 “trixie”**, actualización 13.7. Use una imagen `netinst`: es pequeña y descarga paquetes durante la instalación.
+Debian es una distribución Linux. Usamos la edición estable porque prioriza cambios controlados y soporte predecible. Una ISO es la imagen de instalación que VirtualBox conecta como si fuera un disco. Debian estable verificado: **Debian 13 “trixie”**, actualización 13.7. Use una imagen `netinst`: es pequeña y descarga paquetes durante la instalación.
 
 Fuentes oficiales:
 
@@ -473,6 +955,17 @@ rm archivo-temporal.txt
 cat archivo.log
 ```
 
+### `less` y `nano`
+
+**QUÉ HACEN:** `less` lee archivos largos por páginas; `nano` es un editor de texto sencillo en la terminal.
+
+```bash
+less archivo-largo.log
+nano notas-del-laboratorio.txt
+```
+
+En `less`, use las flechas o Espacio para avanzar y `q` para salir. En `nano`, la banda inferior muestra atajos; `Ctrl+O` guarda, Enter confirma el nombre y `Ctrl+X` sale. Los usaremos para leer logs y editar archivos de configuración pequeños. Antes de modificar, haga una copia con `cp`.
+
 ### `clear`
 
 **QUÉ HACE:** limpia visualmente la terminal; no borra archivos ni historial.
@@ -574,21 +1067,46 @@ sudo systemctl enable --now ssh
 - `enable`: programa inicio automático.
 - `--now`: además lo inicia inmediatamente.
 
+### `ss` y `journalctl`
+
+**QUÉ HACEN:** `ss` muestra sockets de red; `journalctl` consulta el registro de servicios de Linux.
+
+```bash
+sudo ss -lunp
+sudo journalctl -u ssh --since "10 minutes ago"
+```
+
+- `-l` muestra servicios que escuchan; `-u` en `ss` selecciona UDP; `-n` evita resolver nombres; `-p` intenta mostrar el proceso.
+- `journalctl -u ssh` limita la consulta al servicio SSH. Sustituya `ssh` por el servicio que esté diagnosticando.
+- Un **socket** es el extremo del sistema operativo que un proceso usa para comunicarse. En este laboratorio, `0.0.0.0:7979/udp` significa que el proceso está esperando datagramas UDP para NGO en el puerto 7979.
+
 
 ---
 
 ## 14. Configuración de red
 
+Ahora Debian funciona, pero Unity todavía necesita una ruta para alcanzarlo. Configuraremos una interfaz NAT para que Debian descargue paquetes y una interfaz Host Only para que el host se comunique con la VM sin depender del Wi-Fi del aula.
+
+
 ### 14.1 Vocabulario
+
+No memorice estas definiciones aisladas. Utilícelas para dibujar la ruta real entre Unity y Debian.
+
 
 - **IP:** dirección de una interfaz dentro de una red.
 - **Puerto:** número que permite dirigir tráfico a un proceso concreto en una IP.
+- **Interfaz:** conexión de red concreta de una máquina, física o virtual. Una misma VM puede tener una IP NAT y otra Host-Only.
+- **Socket:** combinación que usa un proceso para enviar o recibir; en una escucha se identifica habitualmente por protocolo, dirección y puerto.
+- **TCP:** protocolo orientado a conexión que confirma orden y entrega. SSH usa TCP, normalmente en el puerto 22.
+- **UDP:** protocolo de datagramas sin confirmación incorporada. NGO y NFE lo usan porque el juego puede enviar información nueva antes de que una posición antigua siga siendo útil.
 - **127.0.0.1 / localhost:** loopback; siempre significa “esta misma máquina/proceso de sistema operativo”.
 - **Adaptador virtual:** tarjeta de red que VirtualBox presenta a Debian.
 - **NAT:** permite que la VM salga a Internet; por defecto no facilita que el host inicie conexiones directas al guest.
 - **Host-Only:** red privada entre host y VMs, independiente del Wi-Fi.
 - **Bridged:** coloca la VM en la red física; depende de políticas del aula y no es la opción principal.
 - **Firewall:** reglas que permiten o bloquean tráfico.
+
+Una dirección completa, por ejemplo `192.168.56.101:7979`, se lee así: `192.168.56.101` identifica una interfaz de la VM y `7979` identifica el servicio UDP de NGO dentro de esa VM. No es una dirección web y no incluye el nombre de un archivo.
 
 ### 14.2 Diseño recomendado
 
@@ -669,6 +1187,9 @@ Sin copiar los ejemplos, registre:
 
 ## 15. Preparación de SSH
 
+Ya podemos alcanzar Debian por red. SSH aprovechará esa ruta para abrir una terminal remota cifrada desde el host. Un servicio SSH escucha en Debian; el cliente `ssh` se ejecuta en Terminal de macOS o PowerShell de Windows.
+
+
 SSH crea una terminal cifrada hacia otra máquina. Así puede controlar Debian desde Terminal o PowerShell sin trabajar en la pequeña consola de VirtualBox. `scp` utiliza SSH para transferir archivos.
 
 Si “SSH server” fue seleccionado durante la instalación, ya debe existir. Para asegurar el paquete:
@@ -714,6 +1235,9 @@ exit
 ---
 
 ## 16. Generación del Dedicated Server
+
+Volvemos a Unity. Un Dedicated Server es otra forma de ejecutar el proyecto: conserva simulación y networking, pero no necesita cámara, interfaz de jugador ni renderizado normal. Primero se prueba como proceso Linux directo; solo después se introduce el container.
+
 
 Este paso lo realiza el estudiante después de completar y probar uno de los stacks. NGO y NFE necesitan builds separados porque usan escenas, bootstrap y puertos distintos.
 
@@ -770,9 +1294,61 @@ sudo ss -lunp | grep -E '7979|7980'
 
 ## 18. Contenedor del servidor
 
-Una imagen contiene el ejecutable y sus dependencias. Un container es una ejecución aislada de esa imagen. El Dockerfile describe la construcción y un registry almacena imágenes para que Kubernetes pueda obtenerlas.
+El servidor ya debe funcionar directamente antes de empaquetarlo. Un container no corrige un ejecutable roto; solo ofrece un entorno repetible para ejecutarlo.
+
+> [!CONCEPT]
+> Una **imagen** es una plantilla inmutable con archivos y configuración. Un **container** es un proceso creado desde esa imagen. Un **Dockerfile** es la receta para construirla. Un **runtime**, en este caso Docker, crea y controla containers. Un **registry** almacena imágenes; no se necesita publicar ninguna imagen para las primeras pruebas locales.
+
+### 18.1 Instalar y comprobar Docker en Debian
+
+En la VM Debian, actualice el índice e instale el paquete mantenido por Debian:
+
+```bash
+sudo apt update
+sudo apt install docker.io
+sudo systemctl enable --now docker
+sudo systemctl status docker
+```
+
+- `docker.io` instala el motor y el cliente de Docker.
+- `enable --now` inicia el servicio ahora y en futuros arranques.
+- `status` debe mostrar `active (running)`; presione `q` para salir.
+
+Para evitar usar `sudo` en cada comando, agregue **su usuario actual** al grupo `docker`:
+
+```bash
+sudo usermod -aG docker "$USER"
+```
+
+`-aG` agrega el usuario a un grupo complementario sin eliminar sus otros grupos. Cierre completamente la sesión SSH y vuelva a entrar para que el cambio se aplique. Compruebe:
+
+```bash
+docker version
+docker run --rm hello-world
+```
+
+> [!WARNING]
+> Pertenecer al grupo `docker` concede privilegios elevados sobre la máquina. Hágalo solo en la VM del laboratorio y no exponga el socket de Docker por red.
+
+### 18.2 Leer los Dockerfiles reales
 
 El repositorio incluye `Infrastructure/Containers/NGO/Dockerfile` y `Infrastructure/Containers/NFE/Dockerfile`. Ambos esperan que el estudiante haya generado previamente el build correspondiente. No se construyeron en el starter.
+
+| Instrucción real | Qué hace en esta práctica |
+|---|---|
+| `FROM debian:13-slim` | Comienza con una base Debian mínima. La arquitectura se elige según el host de construcción. |
+| `RUN apt-get ...` | Instala certificados y bibliotecas requeridas; luego elimina el índice temporal para reducir tamaño. |
+| `useradd ... unity` | Crea un usuario sin privilegios para ejecutar el servidor. |
+| `WORKDIR /home/unity/server` | Define el directorio desde el que se copiará y ejecutará el build. |
+| `COPY Builds/... ./` | Copia **toda** la carpeta del build desde el contexto de construcción. |
+| `RUN chmod ... && chown ...` | Concede ejecución al binario y entrega los archivos al usuario `unity`. |
+| `USER unity` | Evita ejecutar el juego como `root`. |
+| `EXPOSE 7979/udp` o `7980/udp` | Documenta el puerto UDP esperado; por sí solo no lo publica al host. |
+| `ENTRYPOINT [...]` | Define el ejecutable y los argumentos que arrancan automáticamente. |
+
+El Dockerfile NGO espera exactamente `NetworkingLabNGOServer.x86_64`; el NFE espera `NetworkingLabNFEServer.x86_64`. Si Unity produjo otro nombre, corrija el perfil o la referencia antes de construir.
+
+### 18.3 Construir, inspeccionar y ejecutar
 
 En Debian amd64, desde la raíz transferida del repositorio:
 
@@ -781,11 +1357,42 @@ docker build -f Infrastructure/Containers/NGO/Dockerfile -t networking-lab-ngo:l
 docker image inspect networking-lab-ngo:local
 ```
 
-Antes de construir, abra el Dockerfile, confirme la ruta `COPY`, el ejecutable y el puerto. En Apple Silicon, una imagen ARM64 no puede ejecutar un binario Unity x86-64 de forma nativa. La plataforma de imagen y la del ejecutable deben coincidir.
+- `-f` selecciona el Dockerfile.
+- `-t` asigna el nombre `networking-lab-ngo` y la etiqueta `local`.
+- El punto final `.` es el **contexto**: la raíz desde la que `COPY` puede leer `Builds/NGO-LinuxServer`.
+- `inspect` devuelve JSON. Busque `Architecture`, `Config.Entrypoint` y `Config.ExposedPorts`.
+
+Ejecute una prueba directa publicando el mismo puerto UDP:
+
+```bash
+docker run --rm --name ngo-server-test -p 7979:7979/udp networking-lab-ngo:local
+```
+
+`--rm` elimina el container al terminar, `--name` le asigna un nombre y `-p` enlaza `PUERTO_HOST:PUERTO_CONTAINER/protocolo`. En otra sesión SSH:
+
+```bash
+docker ps
+docker logs ngo-server-test
+sudo ss -lunp | grep ':7979'
+```
+
+Detenga la prueba de forma ordenada:
+
+```bash
+docker stop ngo-server-test
+```
+
+Para NFE sustituya archivo, nombre de imagen y puerto por los valores NFE reales. Antes de construir, confirme la ruta `COPY`, el ejecutable y el puerto. En Apple Silicon, una imagen ARM64 no puede ejecutar un binario Unity x86-64 de forma nativa: la arquitectura de la imagen y la del ejecutable deben coincidir.
 
 ## 19. Kubernetes single node con Minikube
 
+Hasta ahora el estudiante inicia un container manualmente. Kubernetes introduce un plano de control que decide dónde y cómo ejecutar containers. Para esta práctica usaremos un cluster pequeño de un solo Node dentro de Debian.
+
+
 Esta guía selecciona Minikube con driver Docker porque crea un cluster de un nodo, funciona en Linux amd64 y arm64 y es apropiado para un laboratorio. Agones documenta Minikube para evaluación local. No se instala en el starter.
+
+> [!CONCEPT]
+> Kubernetes recibe una descripción del estado deseado y trabaja continuamente para alcanzarlo. El estudiante no inicia directamente el proceso Unity: crea un recurso, y Kubernetes programa un Pod que contiene el container.
 
 Conceptos:
 
@@ -798,20 +1405,66 @@ Conceptos:
 | YAML | descripción declarativa de recursos |
 | kubectl | cliente para consultar y aplicar recursos |
 
-El script `Infrastructure/Scripts/install-minikube-agones.sh` es material de referencia. Léalo antes de ejecutarlo y compruebe versiones. La combinación documentada al preparar el starter es Minikube 1.39.0, Kubernetes 1.34.6 y Agones 1.60.0.
+El script `Infrastructure/Scripts/install-minikube-agones.sh` es material de referencia. Léalo antes de ejecutarlo: descarga binarios, usa `sudo install` y aplica manifiestos remotos. La combinación documentada al preparar el starter es Minikube 1.39.0, Kubernetes 1.34.6 y Agones 1.60.0.
 
-Ejemplo de comprobación después de la instalación del estudiante:
+### 19.1 Instalar Minikube según la arquitectura
+
+El script detecta la arquitectura de Debian mediante:
 
 ```bash
-minikube start --driver=docker --kubernetes-version=v1.34.6
-kubectl get nodes -o wide
+dpkg --print-architecture
 ```
 
-El estado esperado es `Ready`. Si aparece `NotReady`, consulte `kubectl describe node` y no continúe a Agones.
+El resultado debe ser `amd64` o `arm64`. Después descarga el binario correspondiente y lo instala en `/usr/local/bin/minikube`. No copie literalmente una URL de otra arquitectura. Verifique al final:
+
+```bash
+minikube version
+```
+
+### 19.2 Crear el cluster del laboratorio
+
+El perfil usado por el script se llama `agones`:
+
+```bash
+minikube start -p agones --driver=docker --kubernetes-version=v1.34.6 --cpus=4 --memory=6144
+minikube kubectl -p agones -- get nodes -o wide
+```
+
+- `-p agones`: crea o selecciona el perfil del laboratorio.
+- `--driver=docker`: ejecuta el nodo de Minikube mediante Docker.
+- `--kubernetes-version`: fija la versión comprobada para la práctica.
+- `--cpus` y `--memory`: reservan recursos; la VM debe disponer de ellos.
+- `minikube kubectl ... --`: ejecuta `kubectl` contra ese perfil aunque no exista un binario `kubectl` separado.
+
+Salida conceptual de `get nodes`:
+
+| Columna | Cómo interpretarla |
+|---|---|
+| `NAME` | nombre del nodo creado por Minikube |
+| `STATUS` | debe ser `Ready` antes de continuar |
+| `ROLES` | función de control plane del nodo único |
+| `AGE` | tiempo desde que se creó |
+| `VERSION` | versión real de Kubernetes |
+| `INTERNAL-IP` | IP interna del nodo; todavía no prueba acceso desde el host físico |
+
+Si aparece `NotReady`, consulte y lea la sección `Conditions` y los `Events` finales:
+
+```bash
+minikube status -p agones
+minikube kubectl -p agones -- describe node
+```
+
+No continúe a Agones hasta obtener `Ready`.
 
 ## 20. Agones y GameServer
 
+Kubernetes sabe ejecutar aplicaciones generales. Agones agrega recursos para representar y administrar instancias de servidores de videojuegos. El recurso central de esta práctica es `GameServer`. Agones no transporta el movimiento ni el PowerUp.
+
+
 Kubernetes administra workloads. Agones añade recursos y controladores para servidores de juegos. Agones no reemplaza Unity Transport ni NGO o NFE.
+
+> [!CONCEPT]
+> Un **namespace** agrupa recursos. Un **controller** observa recursos y actúa para acercar el cluster al estado solicitado. Un **CRD** enseña a Kubernetes un tipo nuevo de recurso. Agones instala la CRD `GameServer`; cada instancia crea y supervisa un Pod para un servidor de juego.
 
 ```text
 Unity Client ── UDP ──► Unity Dedicated Server
@@ -822,34 +1475,95 @@ Unity Client ── UDP ──► Unity Dedicated Server
                          Kubernetes
 ```
 
-Instale Agones siguiendo la versión del script y compruebe el namespace:
+### 20.1 Instalar y verificar Agones
+
+El script crea el namespace y aplica el manifiesto oficial de la versión indicada. Después espera hasta cinco minutos a que el controller esté disponible. Si el docente autoriza ejecutar el script completo:
 
 ```bash
-kubectl get pods -n agones-system
-kubectl get crd gameservers.agones.dev
+bash Infrastructure/Scripts/install-minikube-agones.sh
 ```
+
+Verifique explícitamente:
+
+```bash
+minikube kubectl -p agones -- get pods -n agones-system
+minikube kubectl -p agones -- get crd gameservers.agones.dev
+```
+
+En la primera salida, `READY` muestra containers listos frente al total y `STATUS` debe ser `Running` o `Completed` según la función. La segunda salida debe incluir la CRD `gameservers.agones.dev`. Si faltan recursos, no aplique todavía un GameServer.
+
+### 20.2 Leer el manifiesto GameServer
 
 Las plantillas están en `Infrastructure/Kubernetes/Agones`. Antes de aplicar, el estudiante debe sustituir la imagen, confirmar `containerPort`, `hostPort` o política de asignación, protocolo UDP y puerto del stack.
 
+| Campo real | Significado |
+|---|---|
+| `apiVersion: agones.dev/v1` | usa la API instalada por la CRD de Agones |
+| `kind: GameServer` | solicita una instancia administrada de servidor de juego |
+| `metadata.name` | nombre con el que se consultará el recurso |
+| `portPolicy: Static` | conserva el `hostPort` escrito; no solicita asignación dinámica |
+| `containerPort` | puerto donde escucha Unity dentro del container |
+| `hostPort` | puerto UDP publicado en el nodo para llegar al container |
+| `protocol: UDP` | protocolo real de Unity Transport en esta práctica |
+| `health` | tiempos y tolerancia del ciclo de salud de Agones |
+| `nodeSelector` | exige nodo `amd64`; debe revisarse para un artefacto ARM64 real |
+| `image` | nombre de la imagen que debe existir para Minikube |
+| `imagePullPolicy` | `IfNotPresent` reutiliza una imagen local si está disponible |
+| `resources` | CPU y memoria solicitadas y máximas |
+
+La imagen construida en Debian no aparece automáticamente dentro del runtime de Minikube. Cárguela en el perfil antes de aplicar el manifiesto:
+
 ```bash
-kubectl apply -f Infrastructure/Kubernetes/Agones/ngo-gameserver.yaml
-kubectl get gameserver
-kubectl describe gameserver <NOMBRE>
-kubectl get pods -o wide
+minikube image load -p agones networking-lab-ngo:local
+minikube image ls -p agones | grep networking-lab-ngo
 ```
 
-Un GameServer solo alcanza `Ready` cuando el proceso integra el ciclo de vida requerido por Agones. Las plantillas no incorporan silenciosamente esa integración. El estudiante debe implementar el uso del SDK o del REST sidecar expuesto mediante `AGONES_SDK_HTTP_PORT`, llamar `/ready` cuando el transporte escuche y enviar `/health` de forma periódica. Esto es una actividad de infraestructura, no uno de los siete TODO de gameplay.
+### 20.3 Crear y observar el GameServer
+
+```bash
+minikube kubectl -p agones -- apply -f Infrastructure/Kubernetes/Agones/ngo-gameserver.yaml
+minikube kubectl -p agones -- get gameserver
+minikube kubectl -p agones -- describe gameserver <NOMBRE>
+minikube kubectl -p agones -- get pods -o wide
+```
+
+`apply` crea o actualiza el recurso. `get` resume su estado. `describe` muestra configuración y eventos; los eventos finales suelen explicar por qué un Pod no inicia. `get pods -o wide` relaciona el GameServer con su Pod y nodo.
+
+### 20.4 Ciclo Ready y Health
+
+Un GameServer solo alcanza `Ready` cuando el proceso integra el ciclo de vida requerido por Agones. Las plantillas no incorporan silenciosamente esa integración. El estudiante debe implementar el uso del SDK o del REST sidecar expuesto mediante `AGONES_SDK_HTTP_PORT`:
+
+1. Unity inicia y abre el socket de transporte.
+2. El proceso llama `POST /ready` para indicar que acepta jugadores.
+3. Mientras esté sano llama periódicamente `POST /health`.
+4. Agones actualiza el estado y puede retirar una instancia que deja de reportar salud.
+
+Esta es una actividad de infraestructura, no uno de los siete `STUDENT TODO` de gameplay. No marque el GameServer como operativo solamente porque el Pod exista.
 
 ## 21. Address y Port desde el host
 
 El cliente está en macOS o Windows; el Pod está dentro de Minikube en Debian. La IP interna del Pod no es el endpoint que debe escribirse en Unity.
 
-Para este laboratorio, el GameServer debe publicar un `hostPort` UDP en el nodo Minikube y la red Host Only debe permitir llegar a Debian. Obtenga datos reales:
+Para este laboratorio, el GameServer debe publicar un `hostPort` UDP en el nodo Minikube y la red Host Only debe permitir llegar a Debian. Existen tres niveles de dirección:
+
+```text
+macOS o Windows
+    │ usa IP Host-Only de Debian y puerto publicado
+    ▼
+Debian VM
+    │ reenvía o enruta hacia el Node de Minikube
+    ▼
+Node Minikube ── hostPort UDP ──► Pod ── containerPort ──► Unity Server
+```
+
+Obtenga datos reales:
 
 ```bash
-kubectl get gameserver <NOMBRE> -o jsonpath='{.status.address}{"\n"}{.status.ports[0].port}{"\n"}'
-minikube ip
+minikube kubectl -p agones -- get gameserver <NOMBRE> -o jsonpath='{.status.address}{"\n"}{.status.ports[0].port}{"\n"}'
+minikube ip -p agones
 ```
+
+`jsonpath` extrae dos campos sin imprimir todo el YAML: primera línea, `status.address`; segunda línea, primer puerto publicado. `minikube ip` muestra la IP interna del nodo. Registre además la IP Host-Only con `ip -br addr` en Debian.
 
 Si Agones publica la IP del nodo interno de Minikube, el host físico puede no enrutarla. En ese caso configure un reenvío UDP explícito desde la IP Host Only de Debian al endpoint del nodo, o ejecute Minikube con una configuración de red validada por el docente. No use la IP del Pod ni asuma que `localhost` cruza la VM.
 
@@ -860,76 +1574,59 @@ Los campos de Unity son:
 
 Reemplace esos puertos por el puerto asignado que muestre `GameServer.status` si Agones lo cambia.
 
+> [!WARNING]
+> La guía no afirma que exista una ruta automática entre el host físico y la red interna de Minikube. El checkpoint de routing exige demostrarla antes de conectar Unity. Abra solo el puerto UDP del stack que esté probando; no desactive el firewall completo.
+
 ## 22. Multiplayer Play Mode y cuatro clientes
 
-Multiplayer Play Mode 3.0 está instalado. Abra `Window > Play Mode > Scenarios`, cree un escenario y añada hasta tres Additional Editor Instances además del Editor principal. Cada proceso cliente debe usar el mismo Address y Port; no inicie un servidor local si el objetivo es el GameServer de Debian.
+Multiplayer Play Mode 3.0 está instalado. Permite ejecutar instancias adicionales del Editor para representar clientes separados. No convierte los cuatro Players del baseline en clientes de red.
 
-Verifique primero un cliente. Después agregue los demás uno a uno y observe logs de cliente, servidor y Agones. Cuatro jugadores locales en `LocalGameplayBaseline` no equivalen a cuatro clientes.
+### 22.1 Configurar el endpoint en la escena correcta
 
-## 23. Veintiún checkpoints
+- NGO: abra `Assets/Scenes/NGOGameplay.unity`, localice el panel de `NgoConnectionUI`, escriba Address y Port reales y use **Client**. El servidor externo ya debe estar activo; no pulse Host ni Server.
+- NFE: abra `Assets/Scenes/NFEGameplay.unity`, localice `NfeConnectionUI`, escriba el mismo endpoint publicado para el stack NFE y use **Client**.
 
-### CHECKPOINT 1 Starter project comprendido
-**OBJETIVO:** reconocer entregables y límites. **PROCEDIMIENTO:** leer secciones 1 a 3. **VERIFICACIÓN:** ubicar tres escenas y dos prefabs. **RESULTADO ESPERADO:** distinguir implementado y pendiente.
+### 22.2 Probar primero un solo cliente
 
-### CHECKPOINT 2 Gameplay comprendido
-**OBJETIVO:** seguir input a UI. **PROCEDIMIENTO:** ejecutar el baseline. **VERIFICACIÓN:** cuatro controles y mensajes. **RESULTADO ESPERADO:** referencia local operativa.
+1. Observe `GameServer`, Pod y logs del servidor.
+2. Inicie Play en el Editor principal.
+3. Pulse Client una vez.
+4. Confirme estado conectado y aparición del Player o Ghost correspondiente.
+5. Compruebe en logs del servidor que existe una conexión.
 
-### CHECKPOINT 3 Base NGO comprendida
-**OBJETIVO:** reconocer componentes NGO. **PROCEDIMIENTO:** abrir escena y prefab. **VERIFICACIÓN:** NetworkManager, UnityTransport, NetworkObject y NetworkTransform. **RESULTADO ESPERADO:** mapa de responsabilidades.
+Solo después de aprobar este recorrido configure múltiples instancias.
 
-### CHECKPOINT 4 Base NFE comprendida
-**OBJETIVO:** reconocer ECS y Ghost. **PROCEDIMIENTO:** revisar escena, SubScene y scripts. **VERIFICACIÓN:** Components, Systems, Worlds y GhostAuthoring. **RESULTADO ESPERADO:** flujo NFE explicado.
+### 22.3 Crear cuatro clientes
 
-### CHECKPOINT 5 TODO identificados
-**OBJETIVO:** planificar programación. **PROCEDIMIENTO:** buscar `STUDENT TODO`. **VERIFICACIÓN:** siete identificadores únicos y siete actividades. **RESULTADO ESPERADO:** correspondencia exacta.
+1. Abra `Window > Play Mode > Scenarios`.
+2. Cree un escenario para el stack que está probando.
+3. Añada hasta tres **Additional Editor Instances**, además del Editor principal.
+4. Asegure que las cuatro instancias usan la misma escena, Address y Port.
+5. Ejecute y conecte una instancia a la vez.
+6. Compare logs de cada cliente, del Unity Server y de Agones.
 
-### CHECKPOINT 6 Dedicated Server generado
-**OBJETIVO:** crear build de un stack. **PROCEDIMIENTO:** usar Linux Server Build Profile. **VERIFICACIÓN:** `file` identifica ejecutable y arquitectura. **RESULTADO ESPERADO:** directorio completo de build.
+La evidencia correcta muestra cuatro procesos cliente y cuatro identidades de red. Cada Player debe aceptar input solamente de su owner; los demás reciben estado replicado. Para PowerUp, una activación se valida en el servidor y llega una sola vez a la UI de cada cliente.
 
-### CHECKPOINT 7 VirtualBox instalado
-**OBJETIVO:** disponer del hipervisor. **PROCEDIMIENTO:** instalar versión correcta para el host. **VERIFICACIÓN:** VirtualBox abre. **RESULTADO ESPERADO:** aplicación operativa.
+## 23. Checkpoints del laboratorio
 
-### CHECKPOINT 8 Debian instalado
-**OBJETIVO:** preparar guest mínimo. **PROCEDIMIENTO:** instalar ISO de arquitectura correcta. **VERIFICACIÓN:** login y `uname -m`. **RESULTADO ESPERADO:** Debian inicia sin GUI.
+Los checkpoints son comprobaciones manuales, no tests automáticos. Cada uno cierra una etapa que cambia el tipo de problema a resolver; por eso se consolidan en lugar de contar acciones menores. Registre `PASS`, `FAIL`, `BLOCKED` o `NOT_TESTED` y no continúe sobre un fallo de red no entendido.
 
-### CHECKPOINT 9 Host y VM comunicados
-**OBJETIVO:** comprobar Host Only. **PROCEDIMIENTO:** obtener IP y hacer ping. **VERIFICACIÓN:** respuestas desde el host. **RESULTADO ESPERADO:** red privada funcional.
-
-### CHECKPOINT 10 SSH funcionando
-**OBJETIVO:** administrar Debian remotamente. **PROCEDIMIENTO:** instalar y habilitar ssh. **VERIFICACIÓN:** sesión `ssh student@<IP_VM>`. **RESULTADO ESPERADO:** terminal remota.
-
-### CHECKPOINT 11 Server transferido
-**OBJETIVO:** copiar build. **PROCEDIMIENTO:** usar `scp -r`. **VERIFICACIÓN:** `ls -la` muestra todos los archivos. **RESULTADO ESPERADO:** copia íntegra.
-
-### CHECKPOINT 12 Container preparado
-**OBJETIVO:** empaquetar servidor. **PROCEDIMIENTO:** revisar Dockerfile y construir. **VERIFICACIÓN:** `docker image inspect`. **RESULTADO ESPERADO:** imagen con arquitectura correcta.
-
-### CHECKPOINT 13 Kubernetes instalado
-**OBJETIVO:** crear cluster local. **PROCEDIMIENTO:** iniciar Minikube con Docker. **VERIFICACIÓN:** `kubectl version` y contexto Minikube. **RESULTADO ESPERADO:** API accesible.
-
-### CHECKPOINT 14 Node Ready
-**OBJETIVO:** validar nodo. **PROCEDIMIENTO:** `kubectl get nodes`. **VERIFICACIÓN:** estado Ready. **RESULTADO ESPERADO:** scheduler disponible.
-
-### CHECKPOINT 15 Agones instalado
-**OBJETIVO:** añadir controladores de juego. **PROCEDIMIENTO:** instalar versión compatible. **VERIFICACIÓN:** Pods y CRD de Agones. **RESULTADO ESPERADO:** agones-system saludable.
-
-### CHECKPOINT 16 GameServer desplegado
-**OBJETIVO:** crear recurso. **PROCEDIMIENTO:** aplicar YAML ajustado. **VERIFICACIÓN:** GameServer, Pod y logs. **RESULTADO ESPERADO:** proceso ejecutándose y ciclo de vida integrado.
-
-### CHECKPOINT 17 Address y Port obtenidos
-**OBJETIVO:** identificar endpoint. **PROCEDIMIENTO:** consultar status de GameServer. **VERIFICACIÓN:** valores reales y ruta desde host. **RESULTADO ESPERADO:** endpoint UDP alcanzable.
-
-### CHECKPOINT 18 Unity conectado
-**OBJETIVO:** conectar un cliente. **PROCEDIMIENTO:** introducir Address y Port. **VERIFICACIÓN:** ID y logs de ambos extremos. **RESULTADO ESPERADO:** conexión estable.
-
-### CHECKPOINT 19 Movimiento de red
-**OBJETIVO:** validar autoridad y réplica. **PROCEDIMIENTO:** mover un owner. **VERIFICACIÓN:** servidor y clientes convergen. **RESULTADO ESPERADO:** posición consistente.
-
-### CHECKPOINT 20 PowerUp de red
-**OBJETIVO:** validar evento. **PROCEDIMIENTO:** activar PowerUp. **VERIFICACIÓN:** mensaje único y jugador correcto en todos. **RESULTADO ESPERADO:** broadcast y UI por dos segundos.
-
-### CHECKPOINT 21 Múltiples clientes
-**OBJETIVO:** probar cuatro procesos. **PROCEDIMIENTO:** añadir clientes uno a uno en MPPM. **VERIFICACIÓN:** cuatro conexiones y cuatro owners. **RESULTADO ESPERADO:** laboratorio completo.
+| Checkpoint | Qué comprobamos | Procedimiento | PASS significa | Si falla |
+|---|---|---|---|---|
+| 01 Proyecto y baseline | El punto de partida abre y funciona | Abra la escena local, pruebe cuatro controles y PowerUp | Cuatro jugadores se mueven, respetan límites y la UI se limpia | Revise Input Actions, componentes y tests Play Mode |
+| 02 Starter de red | Se entiende el límite entre código entregado y TODO | Ubique los siete TODO, `NetworkManager` y SubScene | Puede explicar las tres tareas NGO y las cuatro NFE | Vuelva a secciones 5 a 8 |
+| 03 VM y arquitectura | Guest e ISO corresponden al host | Compruebe la ISO y ejecute `uname -m` | ARM64 en M4 o x86-64 en Windows | Reinstale con la ISO correcta |
+| 04 Red host VM | Hay Internet y canal privado | Pruebe `apt update`, `ip -br addr` y ping Host-Only | NAT y Host-Only funcionan | Revise adaptadores, DHCP y firewall |
+| 05 SSH | Administración remota segura | `systemctl status ssh` y `ssh usuario@IP_VM` | Prompt remoto por puerto 22 | Revise servicio, IP y credenciales |
+| 06 Código de red | La actividad implementada compila y tiene el flujo correcto | Complete una actividad y pruebe Host más Client | Input, servidor y réplica siguen la arquitectura explicada | Corrija el primer error de compilación o flujo |
+| 07 Dedicated Server directo | El servidor es ejecutable antes de contenerizar | Copie el build, ejecútelo y consulte `pgrep`/`ss` | Proceso y puerto UDP activos | Revise arquitectura, dependencias y argumentos |
+| 08 Container | La imagen conserva el comportamiento directo | Construya, ejecute y lea `docker logs` | El container sigue activo y expone el puerto esperado | Revise Dockerfile, rutas y nombre del ejecutable |
+| 09 Cluster | Kubernetes puede ejecutar cargas | Inicie Minikube y consulte Nodes | El Node está `Ready` | Use `describe node` y resuelva Docker/recursos |
+| 10 Agones | Agones reconoce GameServer y sus controles | Instale, consulte Pods y aplique manifiesto | Controlador disponible y GameServer creado | Lea eventos, versiones e imagen |
+| 11 Ruta al GameServer | El endpoint publicado es alcanzable desde el host | Compare IP Host-Only, Node, estado y puerto | La ruta UDP está demostrada | No use IP del Pod; valide reenvío/ruta con docente |
+| 12 Un cliente | Una conexión completa llega al servidor | Conecte una instancia y revise UI y logs | Identidad y jugador/Ghost aparecen | Revise Address, UDP y TODO de conexión |
+| 13 Cuatro clientes y ownership | Cuatro procesos reciben identidades distintas | Conecte uno a uno y pruebe cada ventana | Cada uno controla solo su jugador | Revise ownership y spawn |
+| 14 Estado compartido | Movimiento y PowerUp llegan a todos | Mueva y active PowerUp desde cada cliente | Posición autoritativa y un mensaje por cliente | Separe input, validación y broadcast |
 
 ## 24. Diagnóstico de problemas
 
@@ -937,6 +1634,8 @@ Verifique primero un cliente. Después agregue los demás uno a uno y observe lo
 |---|---|---|---|
 | Unity no compila | TODO incompleto o API incorrecta | Console y primer error C# | Corregir el primer error antes de continuar |
 | NGO no conecta | Address o UDP 7979 incorrecto | UI y `ss -lunp` | Usar endpoint real y confirmar servidor |
+| Port forwarding no funciona | Regla NAT apunta a IP o puerto incorrecto | Revise protocolo dirección y puertos de la regla | Corregir una sola regla específica |
+| `localhost` conecta al proceso equivocado | Se usa loopback del host | Compare ubicación del cliente y servidor | Usar IP Host Only de Debian |
 | NFE no conecta | NFE 01 incompleto | NetworkId y logs | Completar Listen y Connect |
 | No aparece Player NGO | prefab no registrado o spawn falló | NetworkManager Prefabs y logs | Restaurar registro y revisar servidor |
 | No aparece Ghost NFE | NFE 02 incompleto | Entities Hierarchy | Completar GoInGame y owner |
@@ -946,9 +1645,12 @@ Verifique primero un cliente. Después agregue los demás uno a uno y observe lo
 | Host no llega a VM | Host Only ausente | `ip -br addr` | habilitar Adapter 2 Host Only |
 | SSH falla | servicio detenido o IP incorrecta | `systemctl status ssh` | habilitar servicio y usar IP Host Only |
 | Permission denied | falta permiso x | `ls -l` | `chmod +x` al ejecutable |
+| Dependencia Linux ausente | El ejecutable informa biblioteca no encontrada | Leer salida y usar `ldd` cuando corresponda | Instalar solo la dependencia identificada |
 | Container cierra | ruta o ejecutable incorrecto | `docker logs` | revisar Dockerfile y arquitectura |
+| `kubectl` no conecta | Contexto o cluster detenido | `kubectl config current-context` y `minikube status` | Seleccionar contexto correcto o iniciar Minikube |
 | Node NotReady | Minikube o runtime incompleto | `kubectl describe node` | resolver condición antes de Agones |
 | Agones Pods fallan | versión incompatible o recursos | Pods de agones-system | revisar eventos y matriz de versiones |
+| Pod no inicia | Imagen no disponible o comando incorrecto | `kubectl describe pod` y `kubectl logs` | Corregir imagen ENTRYPOINT o carga local |
 | GameServer no llega a Ready | falta ciclo de vida Agones | describe y logs | implementar Ready y Health mediante SDK o REST |
 | Address no es alcanzable | dirección interna de Minikube | ruta y ping | publicar o reenviar UDP por IP Host Only |
 | Puerto no aparece | transporte no escucha | `ss -lunp` | revisar puerto y logs del servidor |
@@ -970,6 +1672,10 @@ Verifique primero un cliente. Después agregue los demás uno a uno y observe lo
 10. ¿Qué cambia al cerrar el Dedicated Server mientras los clientes están conectados?
 
 Deje espacio para responder en una hoja separada o en la copia digital. No consulte una respuesta automática antes de justificarla con evidencias del laboratorio.
+
+[CAPTURA SUGERIDA: salida de kubectl get nodes con STATUS Ready]
+
+[CAPTURA SUGERIDA: kubectl get gameserver mostrando State Address y Port]
 
 ## 26. Evidencias a entregar
 
@@ -1012,8 +1718,11 @@ No entregue capturas simuladas. Incluya comandos y resultados suficientes para q
 - [Netcode for GameObjects](https://docs.unity3d.com/Packages/com.unity.netcode.gameobjects@2.13/manual/index.html)
 - [Netcode for Entities](https://docs.unity3d.com/Packages/com.unity.netcode@6.6/manual/index.html)
 - [Oracle VirtualBox Downloads](https://www.virtualbox.org/wiki/Downloads)
-- [Oracle VirtualBox 7.2 User Manual](https://download.virtualbox.org/virtualbox/7.2.20/UserManual.pdf)
+- [Oracle VirtualBox User Manual](https://www.virtualbox.org/manual/)
 - [Debian stable](https://www.debian.org/releases/stable/)
+- [Debian netinst amd64 y arm64](https://www.debian.org/distrib/netinst.html)
+- [Docker documentation](https://docs.docker.com/)
+- [Kubernetes documentation](https://kubernetes.io/docs/home/)
 - [Minikube documentation](https://minikube.sigs.k8s.io/docs/)
 - [Agones install on Minikube](https://agones.dev/site/docs/installation/creating-cluster/minikube/)
 - [Agones GameServer specification](https://agones.dev/site/docs/reference/gameserver/)
