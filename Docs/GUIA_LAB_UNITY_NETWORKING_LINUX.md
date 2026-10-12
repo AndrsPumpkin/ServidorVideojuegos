@@ -555,7 +555,7 @@ private void RequestPowerUpRpc()
     AnnouncePowerUpRpc(playerNumber.Value);
 }
 
-[Rpc(SendTo.Clients)]
+[Rpc(SendTo.ClientsAndHost)]
 private void AnnouncePowerUpRpc(int number)
 {
     PowerUpEvents.RaiseActivated($"Player {number}");
@@ -581,12 +581,16 @@ private void AnnouncePowerUpRpc(int number)
 
 ```csharp
 // StartServer
-server.EntityManager.GetComponentDataRW<NetworkStreamDriver>()
-    .ValueRW.Listen(NetworkEndpoint.AnyIpv4.WithPort(ReadPort()));
+using (EntityQuery query = server.EntityManager.CreateEntityQuery(ComponentType.ReadWrite<NetworkStreamDriver>()))
+{
+    query.GetSingletonRW<NetworkStreamDriver>().ValueRW.Listen(NetworkEndpoint.AnyIpv4.WithPort(ReadPort()));
+}
 
 // ConnectClient
-client.EntityManager.GetComponentDataRW<NetworkStreamDriver>()
-    .ValueRW.Connect(client.EntityManager, endpoint);
+using (EntityQuery query = client.EntityManager.CreateEntityQuery(ComponentType.ReadWrite<NetworkStreamDriver>()))
+{
+    query.GetSingletonRW<NetworkStreamDriver>().ValueRW.Connect(client.EntityManager, endpoint);
+}
 ```
 
 - `ServerWorld` y `ClientWorld` son entidades de ejecución distintas, aunque el editor pueda contener ambas.
@@ -707,8 +711,7 @@ foreach (var (input, player) in SystemAPI
     });
     ecb.AddComponent(rpc, new SendRpcCommandRequest
     {
-        TargetConnection = Entity.Null,
-        BroadcastTargets = RpcBroadcastTargets.All
+        TargetConnection = Entity.Null
     });
 }
 ecb.Playback(state.EntityManager);
