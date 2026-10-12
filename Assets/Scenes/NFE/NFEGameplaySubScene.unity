@@ -119,7 +119,7 @@ NavMeshSettings:
     debug:
       m_Flags: 0
   m_NavMeshData: {fileID: 0}
---- !u!1 &1004638022
+--- !u!1 &144890147
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -127,8 +127,8 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 1004638024}
-  - component: {fileID: 1004638023}
+  - component: {fileID: 144890149}
+  - component: {fileID: 144890148}
   m_Layer: 0
   m_Name: NFE Player Spawner
   m_TagString: Untagged
@@ -136,26 +136,26 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1004638023
+--- !u!114 &144890148
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1004638022}
+  m_GameObject: {fileID: 144890147}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 1234382619}
+  m_Script: {fileID: 11500000, guid: 5904a60ef3ba413dadd44d30f3c39a0d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: NetworkingLab.NFE::NetworkingLab.NFE.NfePlayerSpawnerAuthoring
-  playerPrefab: {fileID: 1461669594183616660, guid: 827776f25ce0d417cb5da3b33299bf72, type: 3}
---- !u!4 &1004638024
+  playerPrefab: {fileID: 6473274187405030471, guid: 827776f25ce0d417cb5da3b33299bf72, type: 3}
+--- !u!4 &144890149
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1004638022}
+  m_GameObject: {fileID: 144890147}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -164,23 +164,8 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!115 &1234382619
-MonoScript:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_Name: 
-  serializedVersion: 7
-  m_DefaultReferences: {}
-  m_Icon: {fileID: 0}
-  m_Type: 0
-  m_ExecutionOrder: 0
-  m_ClassName: NfePlayerSpawnerAuthoring
-  m_Namespace: NetworkingLab.NFE
-  m_AssemblyName: NetworkingLab.NFE
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
   m_Roots:
-  - {fileID: 1004638024}
+  - {fileID: 144890149}
