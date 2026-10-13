@@ -26,9 +26,15 @@ namespace NetworkingLab.NGO
             localPlayerText = localPlayer;
         }
 
-        private void Awake()
+        private void Start()
         {
             manager = NetworkManager.Singleton;
+            if (manager == null)
+            {
+                Debug.LogError("[NgoConnectionUI] NetworkManager.Singleton is null. Ensure a NetworkManager exists in the scene.");
+                return;
+            }
+
             addressInput.text = ReadArgument("-address", "127.0.0.1");
             portInput.text = ReadArgument("-port", DefaultPort.ToString());
 
