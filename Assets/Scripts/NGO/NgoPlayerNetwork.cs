@@ -14,6 +14,7 @@ namespace NetworkingLab.NGO
         [SerializeField] private Renderer bodyRenderer;
         [SerializeField] private TextMesh playerLabel;
         [SerializeField, Min(0f)] private float moveSpeed = 5f;
+        [SerializeField, Min(1f)] private float turnSpeed = 720f;
         [SerializeField] private Vector2 horizontalBounds = new(10.5f, 7.5f);
 
         private readonly NetworkVariable<int> playerNumber = new(0,
@@ -65,6 +66,7 @@ namespace NetworkingLab.NGO
         {
             if (!IsOwner || !IsClient || moveAction == null) return;
             Vector2 move = Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f);
+            ApplyFacing(move, Time.deltaTime);
             ApplyLocalPreview(move);
             // STUDENT TODO NGO-01: send the owning client's movement input to the server.
             // Suggested next step: call SubmitMoveRpc(move) and compare preview vs. authority.
@@ -80,8 +82,17 @@ namespace NetworkingLab.NGO
             next.x = Mathf.Clamp(next.x, -horizontalBounds.x, horizontalBounds.x);
             next.z = Mathf.Clamp(next.z, -horizontalBounds.y, horizontalBounds.y);
             transform.position = next;
+            ApplyFacing(move, Time.fixedDeltaTime);
             // STUDENT TODO NGO-02: validate pendingServerInput and move only on the server.
             // NetworkTransform is already attached and will replicate the authoritative result.
+        }
+
+        private void LateUpdate()
+        {
+            if (playerLabel != null)
+            {
+                playerLabel.transform.rotation = Quaternion.Euler(52f, 0f, 0f);
+            }
         }
 
         [Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable, InvokePermission = RpcInvokePermission.Owner)]
@@ -110,6 +121,17 @@ namespace NetworkingLab.NGO
             PowerUpEvents.RaiseActivated($"Player {number}");
         }
 
+
+        private void ApplyFacing(Vector2 move, float deltaTime)
+        {
+            if (move.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            Quaternion target = Quaternion.LookRotation(new Vector3(move.x, 0f, move.y), Vector3.up);
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, target, turnSpeed * deltaTime);
+        }
 
         private void ApplyLocalPreview(Vector2 move)
         {

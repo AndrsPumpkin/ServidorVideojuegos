@@ -129,6 +129,8 @@ namespace NetworkingLab.NFE
     [UpdateInGroup(typeof(PredictedSimulationSystemGroup))]
     public partial struct NfeMovementSystem : ISystem
     {
+        private const float TurnSpeedDegrees = 720f;
+
         public void OnUpdate(ref SystemState state)
         {
             // STUDENT TODO NFE-03: for simulated ghosts, apply NfePlayerInput.Move to
@@ -137,11 +139,20 @@ namespace NetworkingLab.NFE
                 .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>>()
                 .WithAll<Simulate>())
             {
-                float2 move = math.normalizesafe(input.ValueRO.Move);
+                float2 raw = input.ValueRO.Move;
+                float2 move = math.normalizesafe(raw);
                 float2 next = player.ValueRO.Position + move * (5f * SystemAPI.Time.DeltaTime);
                 next.x = math.clamp(next.x, -10.5f, 10.5f);
                 next.y = math.clamp(next.y, -7.5f, 7.5f);
                 player.ValueRW.Position = next;
+
+                if (math.lengthsq(raw) > 0.0001f)
+                {
+                    float targetYaw = math.degrees(math.atan2(move.x, move.y));
+                    float delta = math.fmod(targetYaw - player.ValueRO.RotationY + 540f, 360f) - 180f;
+                    float maxDelta = TurnSpeedDegrees * SystemAPI.Time.DeltaTime;
+                    player.ValueRW.RotationY += math.clamp(delta, -maxDelta, maxDelta);
+                }
             }
         }
     }

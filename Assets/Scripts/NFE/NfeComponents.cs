@@ -13,6 +13,7 @@ namespace NetworkingLab.NFE
     {
         [GhostField] public int PlayerNumber;
         [GhostField(Quantization = 1000)] public float2 Position;
+        [GhostField(Quantization = 1000)] public float RotationY;
     }
 
     public struct NfePlayerInput : IInputComponentData

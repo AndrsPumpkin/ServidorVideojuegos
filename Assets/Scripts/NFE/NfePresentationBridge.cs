@@ -12,7 +12,19 @@ namespace NetworkingLab.NFE
     /// </summary>
     public sealed class NfePresentationBridge : MonoBehaviour
     {
-        private readonly Dictionary<Entity, GameObject> visuals = new();
+        private readonly struct Visual
+        {
+            public readonly GameObject Root;
+            public readonly Transform Label;
+
+            public Visual(GameObject root, Transform label)
+            {
+                Root = root;
+                Label = label;
+            }
+        }
+
+        private readonly Dictionary<Entity, Visual> visuals = new();
 
         private void LateUpdate()
         {
@@ -34,24 +46,29 @@ namespace NetworkingLab.NFE
                 live.Add(entity);
                 NfePlayerState state = entityManager.GetComponentData<NfePlayerState>(entity);
 
-                if (!visuals.TryGetValue(entity, out GameObject visual))
+                if (!visuals.TryGetValue(entity, out Visual visual))
                 {
                     visual = CreateVisual(state.PlayerNumber);
                     visuals.Add(entity, visual);
                 }
 
-                visual.transform.position = new Vector3(state.Position.x, 0.75f, state.Position.y);
+                visual.Root.transform.position = new Vector3(state.Position.x, 0.75f, state.Position.y);
+                visual.Root.transform.rotation = Quaternion.Euler(0f, state.RotationY, 0f);
+                if (visual.Label != null)
+                {
+                    visual.Label.rotation = Quaternion.Euler(52f, 0f, 0f);
+                }
             }
 
             entities.Dispose();
             query.Dispose();
 
             List<Entity> removed = new List<Entity>();
-            foreach (KeyValuePair<Entity, GameObject> pair in visuals)
+            foreach (KeyValuePair<Entity, Visual> pair in visuals)
             {
                 if (!live.Contains(pair.Key))
                 {
-                    Destroy(pair.Value);
+                    Destroy(pair.Value.Root);
                     removed.Add(pair.Key);
                 }
             }
@@ -64,18 +81,18 @@ namespace NetworkingLab.NFE
 
         private void OnDestroy()
         {
-            foreach (GameObject visual in visuals.Values)
+            foreach (Visual visual in visuals.Values)
             {
-                if (visual != null)
+                if (visual.Root != null)
                 {
-                    Destroy(visual);
+                    Destroy(visual.Root);
                 }
             }
 
             visuals.Clear();
         }
 
-        private static GameObject CreateVisual(int playerNumber)
+        private static Visual CreateVisual(int playerNumber)
         {
             GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             visual.name = $"NFE Player {playerNumber} Visual";
@@ -93,7 +110,7 @@ namespace NetworkingLab.NFE
             label.fontSize = 42;
             label.characterSize = 0.08f;
             label.color = Color.white;
-            return visual;
+            return new Visual(visual, labelObject.transform);
         }
 
         private static Color PlayerColor(int number)
