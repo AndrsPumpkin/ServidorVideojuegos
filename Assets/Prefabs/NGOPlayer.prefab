@@ -127,6 +127,7 @@ MonoBehaviour:
   bodyRenderer: {fileID: 3047797597160864257}
   playerLabel: {fileID: 6443514984764003660}
   moveSpeed: 5
+  turnSpeed: 720
   horizontalBounds: {x: 10.5, y: 7.5}
 --- !u!1 &6273529335055512443
 GameObject:
