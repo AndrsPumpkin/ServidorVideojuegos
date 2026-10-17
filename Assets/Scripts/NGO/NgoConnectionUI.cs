@@ -15,15 +15,17 @@ namespace NetworkingLab.NGO
         [SerializeField] private InputField portInput;
         [SerializeField] private Text statusText;
         [SerializeField] private Text localPlayerText;
+        [SerializeField] private GameObject bulletPrefab;
 
         private NetworkManager manager;
 
-        public void Configure(InputField address, InputField port, Text status, Text localPlayer)
+        public void Configure(InputField address, InputField port, Text status, Text localPlayer, GameObject bullet = null)
         {
             addressInput = address;
             portInput = port;
             statusText = status;
             localPlayerText = localPlayer;
+            bulletPrefab = bullet;
         }
 
         private void Start()
@@ -34,6 +36,8 @@ namespace NetworkingLab.NGO
                 Debug.LogError("[NgoConnectionUI] NetworkManager.Singleton is null. Ensure a NetworkManager exists in the scene.");
                 return;
             }
+
+            RegisterBulletPrefab();
 
             addressInput.text = ReadArgument("-address", "127.0.0.1");
             portInput.text = ReadArgument("-port", DefaultPort.ToString());
@@ -93,6 +97,12 @@ namespace NetworkingLab.NGO
             manager.Shutdown();
             localPlayerText.text = "Local player: none";
             SetStatus("Offline");
+        }
+
+        private void RegisterBulletPrefab()
+        {
+            if (bulletPrefab == null || manager.NetworkConfig.Prefabs.Contains(bulletPrefab)) return;
+            manager.AddNetworkPrefab(bulletPrefab);
         }
 
         private void ConfigureTransport(bool server)

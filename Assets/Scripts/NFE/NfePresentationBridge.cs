@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.NetCode;
@@ -25,6 +25,13 @@ namespace NetworkingLab.NFE
         }
 
         private readonly Dictionary<Entity, Visual> visuals = new();
+
+        [SerializeField] private GameObject playerVisualPrefab;
+
+        public void Configure(GameObject visualPrefab)
+        {
+            playerVisualPrefab = visualPrefab;
+        }
 
         private void LateUpdate()
         {
@@ -92,8 +99,13 @@ namespace NetworkingLab.NFE
             visuals.Clear();
         }
 
-        private static Visual CreateVisual(int playerNumber)
+        private Visual CreateVisual(int playerNumber)
         {
+            if (playerVisualPrefab != null)
+            {
+                return CreateVisualFromPrefab(playerNumber);
+            }
+
             GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             visual.name = $"NFE Player {playerNumber} Visual";
             Destroy(visual.GetComponent<Collider>());
@@ -111,6 +123,36 @@ namespace NetworkingLab.NFE
             label.characterSize = 0.08f;
             label.color = Color.white;
             return new Visual(visual, labelObject.transform);
+        }
+
+        private Visual CreateVisualFromPrefab(int playerNumber)
+        {
+            GameObject visual = Instantiate(playerVisualPrefab);
+            visual.name = $"NFE Player {playerNumber} Visual";
+            visual.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+
+            foreach (Collider collider in visual.GetComponentsInChildren<Collider>(true))
+            {
+                Destroy(collider);
+            }
+
+            TextMesh label = visual.GetComponentInChildren<TextMesh>(true);
+            if (label != null)
+            {
+                label.text = $"Player {playerNumber}";
+            }
+
+            foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
+            {
+                if (label != null && renderer.gameObject == label.gameObject)
+                {
+                    continue;
+                }
+
+                renderer.material.color = PlayerColor(playerNumber);
+            }
+
+            return new Visual(visual, label != null ? label.transform : null);
         }
 
         private static Color PlayerColor(int number)

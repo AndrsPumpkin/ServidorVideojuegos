@@ -129,6 +129,11 @@ MonoBehaviour:
   moveSpeed: 5
   turnSpeed: 720
   horizontalBounds: {x: 10.5, y: 7.5}
+  bulletPrefab: {fileID: 6068106014235367216, guid: 2879d642ccd5893499055b503714bc5a, type: 3}
+  fireCooldown: 0.3
+  muzzleSideOffset: 0.6
+  muzzleHeightOffset: 1.5
+  flashDuration: 0.15
 --- !u!1 &6273529335055512443
 GameObject:
   m_ObjectHideFlags: 0

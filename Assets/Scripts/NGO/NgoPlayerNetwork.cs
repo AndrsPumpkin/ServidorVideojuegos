@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using NetworkingLab.PowerUp;
 using Unity.Netcode;
 using UnityEngine;
@@ -11,11 +13,19 @@ namespace NetworkingLab.NGO
         private static int nextPlayerNumber;
         [SerializeField] private InputActionAsset inputActions;
         [SerializeField] private string actionMapName = "Player 1";
-        [SerializeField] private Renderer bodyRenderer;
         [SerializeField] private TextMesh playerLabel;
         [SerializeField, Min(0f)] private float moveSpeed = 5f;
         [SerializeField, Min(1f)] private float turnSpeed = 720f;
         [SerializeField] private Vector2 horizontalBounds = new(10.5f, 7.5f);
+        [SerializeField] private GameObject bulletPrefab;
+        [SerializeField, Min(0f)] private float fireCooldown = 0.3f;
+        [SerializeField] private float muzzleSideOffset = 0.6f;
+        [SerializeField] private float muzzleHeightOffset = 1.5f;
+        [SerializeField, Min(0f)] private float flashDuration = 0.15f;
+
+        private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
+        private static readonly Color HitEmission = new Color(1f, 0f, 0f) * 3f;
+        private const string EmissionKeyword = "_EMISSION";
 
         private readonly NetworkVariable<int> playerNumber = new(0,
             NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -23,18 +33,20 @@ namespace NetworkingLab.NGO
         private InputAction moveAction;
         private InputAction powerUpAction;
         private Vector2 pendingServerInput;
+        private float nextFireTime;
+        private Coroutine flashRoutine;
 
         public int PlayerNumber => playerNumber.Value;
         public static void ResetSequence() => nextPlayerNumber = 0;
 
-        public void Configure(InputActionAsset actions, string mapName, Renderer renderer, TextMesh label, float speed, Vector2 bounds)
+        public void Configure(InputActionAsset actions, string mapName, Renderer renderer, TextMesh label, float speed, Vector2 bounds, GameObject bullet = null)
         {
             inputActions = actions;
             actionMapName = mapName;
-            bodyRenderer = renderer;
             playerLabel = label;
             moveSpeed = speed;
             horizontalBounds = bounds;
+            bulletPrefab = bullet;
         }
 
         public override void OnNetworkSpawn()
@@ -113,12 +125,66 @@ namespace NetworkingLab.NGO
         {
             if (!IsSpawned || playerNumber.Value <= 0) return;
             AnnouncePowerUpRpc(playerNumber.Value);
+            TryFire();
         }
 
         [Rpc(SendTo.ClientsAndHost)]
         private void AnnouncePowerUpRpc(int number)
         {
             PowerUpEvents.RaiseActivated($"Player {number}");
+        }
+
+        private void TryFire()
+        {
+            if (bulletPrefab == null || Time.time < nextFireTime) return;
+            nextFireTime = Time.time + fireCooldown;
+
+            Vector3 spawnPosition = transform.position
+                + transform.right * muzzleSideOffset
+                + Vector3.up * muzzleHeightOffset;
+            Quaternion bulletRotation = Quaternion.LookRotation(transform.right, Vector3.up);
+            GameObject instance = Instantiate(bulletPrefab, spawnPosition, bulletRotation);
+            if (!instance.TryGetComponent(out NetworkObject networkObject))
+            {
+                Destroy(instance);
+                return;
+            }
+
+            networkObject.Spawn(true);
+            if (instance.TryGetComponent(out NgoBulletProjectile projectile))
+            {
+                projectile.Configure(playerNumber.Value);
+            }
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        internal void FlashHitRpc()
+        {
+            if (flashRoutine != null) return;
+            flashRoutine = StartCoroutine(FlashRoutine());
+        }
+
+        private IEnumerator FlashRoutine()
+        {
+            List<(Material material, Color color, bool emission)> saved = new();
+            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
+            {
+                if (playerLabel != null && renderer.gameObject == playerLabel.gameObject) continue;
+                Material material = renderer.material;
+                saved.Add((material, material.GetColor(EmissionColorId), material.IsKeywordEnabled(EmissionKeyword)));
+                material.EnableKeyword(EmissionKeyword);
+                material.SetColor(EmissionColorId, HitEmission);
+            }
+
+            yield return new WaitForSeconds(flashDuration);
+
+            foreach ((Material material, Color color, bool emission) in saved)
+            {
+                material.SetColor(EmissionColorId, color);
+                if (!emission) material.DisableKeyword(EmissionKeyword);
+            }
+
+            flashRoutine = null;
         }
 
 
@@ -155,7 +221,12 @@ namespace NetworkingLab.NGO
             if (number <= 0) return;
             gameObject.name = $"NGO Player {number}";
             if (playerLabel != null) playerLabel.text = $"Player {number}";
-            if (bodyRenderer != null) bodyRenderer.material.color = PlayerColor(number);
+            Color color = PlayerColor(number);
+            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
+            {
+                if (playerLabel != null && renderer.gameObject == playerLabel.gameObject) continue;
+                renderer.material.color = color;
+            }
         }
 
         private static Vector3 SpawnPosition(int number)

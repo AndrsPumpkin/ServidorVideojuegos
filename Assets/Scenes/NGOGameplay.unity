@@ -1111,6 +1111,7 @@ MonoBehaviour:
   portInput: {fileID: 2032440240}
   statusText: {fileID: 790394944}
   localPlayerText: {fileID: 270375834}
+  bulletPrefab: {fileID: 6068106014235367216, guid: 2879d642ccd5893499055b503714bc5a, type: 3}
 --- !u!114 &1215136817
 MonoBehaviour:
   m_ObjectHideFlags: 0

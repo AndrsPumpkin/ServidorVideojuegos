@@ -28,6 +28,7 @@ namespace NetworkingLab.Editor
         public const string NfeSubScenePath = "Assets/Scenes/NFE/NFEGameplaySubScene.unity";
         public const string NgoPrefabPath = "Assets/Prefabs/NGOPlayer.prefab";
         public const string NfePrefabPath = "Assets/Prefabs/NFEPlayer.prefab";
+        public const string BulletPrefabPath = "Assets/Prefabs/Bullet.prefab";
         private const string InputPath = "Assets/Input/LocalPlayers.inputactions";
 
         [MenuItem("Networking Lab/Build NGO and NFE Scenes")]
@@ -82,7 +83,8 @@ namespace NetworkingLab.Editor
             }
 
             NgoPlayerNetwork player = root.AddComponent<NgoPlayerNetwork>();
-            player.Configure(input, "Player 1", renderer, label, 5f, new Vector2(10.5f, 7.5f));
+            GameObject bulletPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BulletPrefabPath);
+            player.Configure(input, "Player 1", renderer, label, 5f, new Vector2(10.5f, 7.5f), bulletPrefab);
             GameObject prefab = PrefabUtility.SaveAsPrefabAsset(root, NgoPrefabPath);
             Object.DestroyImmediate(root);
             return prefab;
@@ -106,7 +108,13 @@ namespace NetworkingLab.Editor
 
             ConnectionPanel panel = BuildConnectionPanel("NGO — NETCODE FOR GAMEOBJECTS", "UDP 7979");
             NgoConnectionUI ui = panel.Canvas.gameObject.AddComponent<NgoConnectionUI>();
-            ui.Configure(panel.Address, panel.Port, panel.Status, panel.LocalPlayer);
+            GameObject bulletPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(BulletPrefabPath);
+            if (bulletPrefab == null)
+            {
+                Debug.LogError($"NGO bullet prefab not found at {BulletPrefabPath}.");
+            }
+
+            ui.Configure(panel.Address, panel.Port, panel.Status, panel.LocalPlayer, bulletPrefab);
             panel.Port.text = NgoConnectionUI.DefaultPort.ToString();
             AddButton(panel.ButtonParent, "Start Server", new Vector2(0f, 0f), ui.StartServer);
             AddButton(panel.ButtonParent, "Start Host", new Vector2(170f, 0f), ui.StartHost);
@@ -149,7 +157,13 @@ namespace NetworkingLab.Editor
             subScene.AutoLoadScene = true;
 
             GameObject bridge = new("NFE Presentation Bridge");
-            bridge.AddComponent<NfePresentationBridge>();
+            GameObject playerVisual = AssetDatabase.LoadAssetAtPath<GameObject>(NgoPrefabPath);
+            if (playerVisual == null)
+            {
+                Debug.LogError($"NFE player visual prefab not found at {NgoPrefabPath}.");
+            }
+
+            bridge.AddComponent<NfePresentationBridge>().Configure(playerVisual);
 
             ConnectionPanel panel = BuildConnectionPanel("NFE — NETCODE FOR ENTITIES", "UDP 7980");
             NfeConnectionUI ui = panel.Canvas.gameObject.AddComponent<NfeConnectionUI>();

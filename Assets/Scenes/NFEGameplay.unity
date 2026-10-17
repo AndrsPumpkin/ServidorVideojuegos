@@ -1900,6 +1900,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 8b8b8e83b09144f01b324b2e66e07729, type: 3}
   m_Name: 
   m_EditorClassIdentifier: NetworkingLab.NFE::NetworkingLab.NFE.NfePresentationBridge
+  playerVisualPrefab: {fileID: 773850228711086615, guid: aafc3f1b8707a4990ae0e022ca79939d, type: 3}
 --- !u!4 &1739023193
 Transform:
   m_ObjectHideFlags: 0
