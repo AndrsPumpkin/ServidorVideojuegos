@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System.Collections;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.NetCode;
@@ -12,25 +13,44 @@ namespace NetworkingLab.NFE
     /// </summary>
     public sealed class NfePresentationBridge : MonoBehaviour
     {
+        private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
+        private static readonly Color HitEmission = new Color(1f, 0f, 0f) * 3f;
+        private const string EmissionKeyword = "_EMISSION";
+        private const float FlashDuration = 0.15f;
+
         private readonly struct Visual
         {
             public readonly GameObject Root;
             public readonly Transform Label;
+            public readonly Renderer[] Renderers;
 
-            public Visual(GameObject root, Transform label)
+            public Visual(GameObject root, Transform label, Renderer[] renderers)
             {
                 Root = root;
                 Label = label;
+                Renderers = renderers;
             }
         }
 
-        private readonly Dictionary<Entity, Visual> visuals = new();
+        public static NfePresentationBridge Instance { get; private set; }
+
+        private readonly Dictionary<Entity, Visual> playerVisuals = new();
+        private readonly Dictionary<Entity, GameObject> bulletVisuals = new();
+        private readonly Dictionary<int, Renderer[]> playerRenderersByNumber = new();
+        private readonly Dictionary<int, Coroutine> flashRoutines = new();
 
         [SerializeField] private GameObject playerVisualPrefab;
+        [SerializeField] private GameObject bulletVisualPrefab;
 
-        public void Configure(GameObject visualPrefab)
+        public void Configure(GameObject playerVisual, GameObject bulletVisual = null)
         {
-            playerVisualPrefab = visualPrefab;
+            playerVisualPrefab = playerVisual;
+            bulletVisualPrefab = bulletVisual;
+        }
+
+        private void Awake()
+        {
+            Instance = this;
         }
 
         private void LateUpdate()
@@ -42,6 +62,83 @@ namespace NetworkingLab.NFE
             }
 
             EntityManager entityManager = client.EntityManager;
+            UpdatePlayers(entityManager);
+            UpdateBullets(entityManager);
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this)
+            {
+                Instance = null;
+            }
+
+            foreach (Visual visual in playerVisuals.Values)
+            {
+                if (visual.Root != null)
+                {
+                    Destroy(visual.Root);
+                }
+            }
+
+            foreach (GameObject bullet in bulletVisuals.Values)
+            {
+                if (bullet != null)
+                {
+                    Destroy(bullet);
+                }
+            }
+
+            playerVisuals.Clear();
+            bulletVisuals.Clear();
+            playerRenderersByNumber.Clear();
+        }
+
+        public static void RequestHitFlash(int playerNumber)
+        {
+            if (Instance != null)
+            {
+                Instance.FlashHit(playerNumber);
+            }
+        }
+
+        private void FlashHit(int playerNumber)
+        {
+            if (flashRoutines.ContainsKey(playerNumber)) return;
+            if (!playerRenderersByNumber.TryGetValue(playerNumber, out Renderer[] renderers) || renderers.Length == 0)
+            {
+                return;
+            }
+
+            flashRoutines[playerNumber] = StartCoroutine(FlashRoutine(playerNumber, renderers));
+        }
+
+        private IEnumerator FlashRoutine(int playerNumber, Renderer[] renderers)
+        {
+            List<(Material material, Color color, bool emission)> saved = new();
+            foreach (Renderer renderer in renderers)
+            {
+                if (renderer == null) continue;
+                Material material = renderer.material;
+                saved.Add((material, material.GetColor(EmissionColorId), material.IsKeywordEnabled(EmissionKeyword)));
+                material.EnableKeyword(EmissionKeyword);
+                material.SetColor(EmissionColorId, HitEmission);
+            }
+
+            yield return new WaitForSeconds(FlashDuration);
+
+            foreach ((Material material, Color color, bool emission) in saved)
+            {
+                if (material == null) continue;
+                material.SetColor(EmissionColorId, color);
+                if (!emission) material.DisableKeyword(EmissionKeyword);
+            }
+
+            flashRoutines.Remove(playerNumber);
+        }
+
+        private void UpdatePlayers(EntityManager entityManager)
+        {
             EntityQuery query = entityManager.CreateEntityQuery(
                 ComponentType.ReadOnly<NfePlayerTag>(),
                 ComponentType.ReadOnly<NfePlayerState>());
@@ -53,10 +150,11 @@ namespace NetworkingLab.NFE
                 live.Add(entity);
                 NfePlayerState state = entityManager.GetComponentData<NfePlayerState>(entity);
 
-                if (!visuals.TryGetValue(entity, out Visual visual))
+                if (!playerVisuals.TryGetValue(entity, out Visual visual))
                 {
-                    visual = CreateVisual(state.PlayerNumber);
-                    visuals.Add(entity, visual);
+                    visual = CreatePlayerVisual(state.PlayerNumber);
+                    playerVisuals.Add(entity, visual);
+                    playerRenderersByNumber[state.PlayerNumber] = visual.Renderers;
                 }
 
                 visual.Root.transform.position = new Vector3(state.Position.x, 0.75f, state.Position.y);
@@ -71,39 +169,68 @@ namespace NetworkingLab.NFE
             query.Dispose();
 
             List<Entity> removed = new List<Entity>();
-            foreach (KeyValuePair<Entity, Visual> pair in visuals)
+            foreach (KeyValuePair<Entity, Visual> pair in playerVisuals)
             {
-                if (!live.Contains(pair.Key))
-                {
-                    Destroy(pair.Value.Root);
-                    removed.Add(pair.Key);
-                }
+                if (live.Contains(pair.Key)) continue;
+                Destroy(pair.Value.Root);
+                removed.Add(pair.Key);
             }
 
             foreach (Entity entity in removed)
             {
-                visuals.Remove(entity);
+                playerVisuals.Remove(entity);
             }
         }
 
-        private void OnDestroy()
+        private void UpdateBullets(EntityManager entityManager)
         {
-            foreach (Visual visual in visuals.Values)
+            EntityQuery query = entityManager.CreateEntityQuery(
+                ComponentType.ReadOnly<NfeBulletTag>(),
+                ComponentType.ReadOnly<NfeBulletState>());
+
+            NativeArray<Entity> entities = query.ToEntityArray(Allocator.Temp);
+            HashSet<Entity> live = new HashSet<Entity>();
+            foreach (Entity entity in entities)
             {
-                if (visual.Root != null)
+                live.Add(entity);
+                NfeBulletState state = entityManager.GetComponentData<NfeBulletState>(entity);
+
+                if (!bulletVisuals.TryGetValue(entity, out GameObject visual))
                 {
-                    Destroy(visual.Root);
+                    visual = CreateBulletVisual();
+                    bulletVisuals.Add(entity, visual);
+                }
+
+                visual.transform.position = new Vector3(state.Position.x, state.Position.y, state.Position.z);
+                Vector3 velocity = new Vector3(state.Velocity.x, state.Velocity.y, state.Velocity.z);
+                if (velocity.sqrMagnitude > 0.0001f)
+                {
+                    visual.transform.rotation = Quaternion.LookRotation(velocity, Vector3.up);
                 }
             }
 
-            visuals.Clear();
+            entities.Dispose();
+            query.Dispose();
+
+            List<Entity> removed = new List<Entity>();
+            foreach (KeyValuePair<Entity, GameObject> pair in bulletVisuals)
+            {
+                if (live.Contains(pair.Key)) continue;
+                Destroy(pair.Value);
+                removed.Add(pair.Key);
+            }
+
+            foreach (Entity entity in removed)
+            {
+                bulletVisuals.Remove(entity);
+            }
         }
 
-        private Visual CreateVisual(int playerNumber)
+        private Visual CreatePlayerVisual(int playerNumber)
         {
             if (playerVisualPrefab != null)
             {
-                return CreateVisualFromPrefab(playerNumber);
+                return CreatePlayerVisualFromPrefab(playerNumber);
             }
 
             GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -122,10 +249,12 @@ namespace NetworkingLab.NFE
             label.fontSize = 42;
             label.characterSize = 0.08f;
             label.color = Color.white;
-            return new Visual(visual, labelObject.transform);
+
+            Renderer[] renderers = { visual.GetComponent<Renderer>() };
+            return new Visual(visual, labelObject.transform, renderers);
         }
 
-        private Visual CreateVisualFromPrefab(int playerNumber)
+        private Visual CreatePlayerVisualFromPrefab(int playerNumber)
         {
             GameObject visual = Instantiate(playerVisualPrefab);
             visual.name = $"NFE Player {playerNumber} Visual";
@@ -136,23 +265,45 @@ namespace NetworkingLab.NFE
                 Destroy(collider);
             }
 
+            Transform labelTransform = null;
             TextMesh label = visual.GetComponentInChildren<TextMesh>(true);
             if (label != null)
             {
                 label.text = $"Player {playerNumber}";
+                labelTransform = label.transform;
             }
 
+            List<Renderer> renderers = new();
             foreach (Renderer renderer in visual.GetComponentsInChildren<Renderer>(true))
             {
-                if (label != null && renderer.gameObject == label.gameObject)
-                {
-                    continue;
-                }
-
+                if (label != null && renderer.gameObject == label.gameObject) continue;
                 renderer.material.color = PlayerColor(playerNumber);
+                renderers.Add(renderer);
             }
 
-            return new Visual(visual, label != null ? label.transform : null);
+            return new Visual(visual, labelTransform, renderers.ToArray());
+        }
+
+        private GameObject CreateBulletVisual()
+        {
+            GameObject visual;
+            if (bulletVisualPrefab != null)
+            {
+                visual = Instantiate(bulletVisualPrefab);
+                foreach (Collider collider in visual.GetComponentsInChildren<Collider>(true))
+                {
+                    Destroy(collider);
+                }
+            }
+            else
+            {
+                visual = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                Destroy(visual.GetComponent<Collider>());
+                visual.transform.localScale = Vector3.one * 0.5f;
+            }
+
+            visual.name = "NFE Bullet Visual";
+            return visual;
         }
 
         private static Color PlayerColor(int number)

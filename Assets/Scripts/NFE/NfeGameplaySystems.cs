@@ -162,13 +162,21 @@ namespace NetworkingLab.NFE
     [UpdateAfter(typeof(NfeMovementSystem))]
     public partial struct NfePowerUpServerSystem : ISystem
     {
+        private const float FireCooldownSeconds = 0.3f;
+        private const float BulletSpeed = 12f;
+        private const float MuzzleSideOffset = 0.6f;
+        private const float MuzzleHeightOffset = 1.5f;
+        private const float PlayerHeight = 0.75f;
+
         public void OnUpdate(ref SystemState state)
         {
             // STUDENT TODO NFE-04: detect InputEvent PowerUp on the server and broadcast
             // NfePowerUpResultRpc containing the replicated PlayerNumber.
+            double elapsed = SystemAPI.Time.ElapsedTime;
+            bool hasSpawner = SystemAPI.TryGetSingleton<NfeBulletSpawner>(out NfeBulletSpawner spawner);
             EntityCommandBuffer ecb = new(Allocator.Temp);
             foreach (var (input, player) in SystemAPI
-                .Query<RefRO<NfePlayerInput>, RefRO<NfePlayerState>>()
+                .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>>()
                 .WithAll<Simulate>())
             {
                 if (!input.ValueRO.PowerUp.IsSet) continue;
@@ -180,6 +188,24 @@ namespace NetworkingLab.NFE
                 ecb.AddComponent(rpc, new SendRpcCommandRequest
                 {
                     TargetConnection = Entity.Null
+                });
+
+                if (!hasSpawner || spawner.BulletPrefab == Entity.Null) continue;
+                if (elapsed < player.ValueRO.FireCooldown) continue;
+
+                player.ValueRW.FireCooldown = (float)(elapsed + FireCooldownSeconds);
+                float yawRadians = math.radians(player.ValueRO.RotationY);
+                float3 right = new float3(math.cos(yawRadians), 0f, -math.sin(yawRadians));
+                float3 origin = new float3(player.ValueRO.Position.x, PlayerHeight, player.ValueRO.Position.y);
+                float3 spawnPosition = origin + right * MuzzleSideOffset + new float3(0f, MuzzleHeightOffset, 0f);
+
+                Entity bullet = ecb.Instantiate(spawner.BulletPrefab);
+                ecb.SetComponent(bullet, new NfeBulletState
+                {
+                    Position = spawnPosition,
+                    Velocity = right * BulletSpeed,
+                    Lifetime = 2f,
+                    OwnerPlayerNumber = player.ValueRO.PlayerNumber
                 });
             }
             ecb.Playback(state.EntityManager);

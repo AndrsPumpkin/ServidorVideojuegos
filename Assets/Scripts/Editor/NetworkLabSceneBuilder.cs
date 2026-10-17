@@ -2,8 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using NetworkingLab.NFE;
 using NetworkingLab.NGO;
-using NetworkingLab.UI;
 using Unity.Entities;
+using Unity.Entities.Hybrid.Baking;
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using Unity.Netcode.Transports.UTP;
@@ -44,8 +44,9 @@ namespace NetworkingLab.Editor
             GameObject ngoPrefab = BuildNgoPrefab(input);
             BuildNgoScene(ngoPrefab);
             GameObject nfePrefab = BuildNfePrefab();
-            BuildNfeSubScene(nfePrefab);
-            BuildNfeScene();
+            GameObject bulletPrefab = EnsureNfeBulletPrefab();
+            BuildNfeSubScene(nfePrefab, bulletPrefab);
+            BuildNfeScene(bulletPrefab);
             ConfigureBuildSettings();
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
@@ -138,15 +139,52 @@ namespace NetworkingLab.Editor
             return prefab;
         }
 
-        private static void BuildNfeSubScene(GameObject playerPrefab)
+        private static void BuildNfeSubScene(GameObject playerPrefab, GameObject bulletPrefab)
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObject spawnerObject = new("NFE Player Spawner");
             spawnerObject.AddComponent<NfePlayerSpawnerAuthoring>().Configure(playerPrefab);
+            GameObject bulletSpawnerObject = new("NFE Bullet Spawner");
+            bulletSpawnerObject.AddComponent<NfeBulletSpawnerAuthoring>().Configure(bulletPrefab);
             EditorSceneManager.SaveScene(scene, NfeSubScenePath);
         }
 
-        private static void BuildNfeScene()
+        private static GameObject EnsureNfeBulletPrefab()
+        {
+            GameObject root = PrefabUtility.LoadPrefabContents(BulletPrefabPath);
+            bool changed = false;
+
+            if (root.GetComponent<NfeBulletAuthoring>() == null)
+            {
+                root.AddComponent<NfeBulletAuthoring>();
+                changed = true;
+            }
+
+            if (root.GetComponent<LinkedEntityGroupAuthoring>() == null)
+            {
+                root.AddComponent<LinkedEntityGroupAuthoring>();
+                changed = true;
+            }
+
+            if (root.GetComponent<GhostAuthoringComponent>() == null)
+            {
+                GhostAuthoringComponent ghost = root.AddComponent<GhostAuthoringComponent>();
+                ghost.DefaultGhostMode = GhostMode.Interpolated;
+                ghost.HasOwner = false;
+                ghost.SupportAutoCommandTarget = false;
+                changed = true;
+            }
+
+            if (changed)
+            {
+                PrefabUtility.SaveAsPrefabAsset(root, BulletPrefabPath);
+            }
+
+            PrefabUtility.UnloadPrefabContents(root);
+            return AssetDatabase.LoadAssetAtPath<GameObject>(BulletPrefabPath);
+        }
+
+        private static void BuildNfeScene(GameObject bulletVisual)
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             BuildEnvironment();
@@ -163,7 +201,7 @@ namespace NetworkingLab.Editor
                 Debug.LogError($"NFE player visual prefab not found at {NgoPrefabPath}.");
             }
 
-            bridge.AddComponent<NfePresentationBridge>().Configure(playerVisual);
+            bridge.AddComponent<NfePresentationBridge>().Configure(playerVisual, bulletVisual);
 
             ConnectionPanel panel = BuildConnectionPanel("NFE — NETCODE FOR ENTITIES", "UDP 7980");
             NfeConnectionUI ui = panel.Canvas.gameObject.AddComponent<NfeConnectionUI>();
@@ -220,10 +258,6 @@ namespace NetworkingLab.Editor
             Text local = CreateText(canvasObject.transform, "LocalPlayer", "Local player: none", 20, TextAnchor.UpperLeft);
             SetRect(local.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(35f, -225f), new Vector2(600f, -185f));
 
-            Text message = CreateText(canvasObject.transform, "PowerUpMessage", string.Empty, 40, TextAnchor.MiddleCenter);
-            message.color = new Color(1f, 0.9f, 0.2f);
-            SetRect(message.rectTransform, new Vector2(0.5f, 0.8f), new Vector2(0.5f, 0.8f), new Vector2(-600f, -45f), new Vector2(600f, 45f));
-            canvasObject.AddComponent<PowerUpMessageUI>().Configure(message, 2f);
 
             GameObject buttons = new("ConnectionButtons", typeof(RectTransform));
             buttons.transform.SetParent(canvasObject.transform, false);

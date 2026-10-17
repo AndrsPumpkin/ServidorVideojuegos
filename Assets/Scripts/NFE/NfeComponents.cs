@@ -14,6 +14,25 @@ namespace NetworkingLab.NFE
         [GhostField] public int PlayerNumber;
         [GhostField(Quantization = 1000)] public float2 Position;
         [GhostField(Quantization = 1000)] public float RotationY;
+        public float FireCooldown;
+    }
+
+    public struct NfeBulletTag : IComponentData
+    {
+    }
+
+    public struct NfeBulletState : IComponentData
+    {
+        [GhostField(Quantization = 1000)] public float3 Position;
+        [GhostField(Quantization = 1000)] public float3 Velocity;
+        public float Age;
+        public float Lifetime;
+        public int OwnerPlayerNumber;
+    }
+
+    public struct NfeBulletSpawner : IComponentData
+    {
+        public Entity BulletPrefab;
     }
 
     public struct NfePlayerInput : IInputComponentData
