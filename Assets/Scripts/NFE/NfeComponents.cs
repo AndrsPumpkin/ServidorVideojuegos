@@ -17,6 +17,18 @@ namespace NetworkingLab.NFE
         public float FireCooldown;
     }
 
+    public struct NfePlayerLives : IComponentData
+    {
+        [GhostField] public int Lives;
+        [GhostField] public byte IsDead;
+    }
+
+    public struct NfeGameState : IComponentData
+    {
+        [GhostField] public byte GameOver;
+        [GhostField] public int WinnerPlayerNumber;
+    }
+
     public struct NfeBulletTag : IComponentData
     {
     }

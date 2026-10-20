@@ -14,6 +14,11 @@ namespace NetworkingLab.NFE
         public int PlayerNumber;
     }
 
+    public struct NfeGameOverRpc : IRpcCommand
+    {
+        public int WinnerPlayerNumber;
+    }
+
     [WorldSystemFilter(WorldSystemFilterFlags.ClientSimulation | WorldSystemFilterFlags.ServerSimulation)]
     [UpdateInGroup(typeof(InitializationSystemGroup))]
     [CreateAfter(typeof(RpcSystem))]
@@ -75,6 +80,16 @@ namespace NetworkingLab.NFE
             ComponentLookup<NetworkId> networkIds = state.GetComponentLookup<NetworkId>(true);
             networkIds.Update(ref state);
 
+            if (!SystemAPI.HasSingleton<NfeGameState>())
+            {
+                Entity gameState = ecb.CreateEntity();
+                ecb.AddComponent(gameState, new NfeGameState
+                {
+                    GameOver = 0,
+                    WinnerPlayerNumber = 0
+                });
+            }
+
             foreach (var (request, rpcEntity) in SystemAPI
                 .Query<RefRO<ReceiveRpcCommandRequest>>()
                 .WithAll<NfeGoInGameRequest>().WithEntityAccess())
@@ -85,6 +100,7 @@ namespace NetworkingLab.NFE
                 Entity player = ecb.Instantiate(prefab);
                 ecb.SetComponent(player, new GhostOwner { NetworkId = networkId });
                 ecb.SetComponent(player, new NfePlayerState { PlayerNumber = networkId });
+                ecb.SetComponent(player, new NfePlayerLives { Lives = 3, IsDead = 0 });
                 ecb.AppendToBuffer(connection, new LinkedEntityGroup { Value = player });
                 ecb.DestroyEntity(rpcEntity);
             }
@@ -133,12 +149,25 @@ namespace NetworkingLab.NFE
 
         public void OnUpdate(ref SystemState state)
         {
+            if (SystemAPI.HasSingleton<NfeGameState>())
+            {
+                if (SystemAPI.GetSingleton<NfeGameState>().GameOver == 1)
+                {
+                    return;
+                }
+            }
+
             // STUDENT TODO NFE-03: for simulated ghosts, apply NfePlayerInput.Move to
             // NfePlayerState.Position with DeltaTime and the baseline movement bounds.
-            foreach (var (input, player) in SystemAPI
-                .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>>()
+            foreach (var (input, player, lives) in SystemAPI
+                .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>, RefRO<NfePlayerLives>>()
                 .WithAll<Simulate>())
             {
+                if (lives.ValueRO.IsDead == 1 || lives.ValueRO.Lives <= 0)
+                {
+                    continue;
+                }
+
                 float2 raw = input.ValueRO.Move;
                 float2 move = math.normalizesafe(raw);
                 float2 next = player.ValueRO.Position + move * (5f * SystemAPI.Time.DeltaTime);
@@ -172,13 +201,26 @@ namespace NetworkingLab.NFE
         {
             // STUDENT TODO NFE-04: detect InputEvent PowerUp on the server and broadcast
             // NfePowerUpResultRpc containing the replicated PlayerNumber.
+            if (SystemAPI.HasSingleton<NfeGameState>())
+            {
+                if (SystemAPI.GetSingleton<NfeGameState>().GameOver == 1)
+                {
+                    return;
+                }
+            }
+
             double elapsed = SystemAPI.Time.ElapsedTime;
             bool hasSpawner = SystemAPI.TryGetSingleton<NfeBulletSpawner>(out NfeBulletSpawner spawner);
             EntityCommandBuffer ecb = new(Allocator.Temp);
-            foreach (var (input, player) in SystemAPI
-                .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>>()
+            foreach (var (input, player, lives) in SystemAPI
+                .Query<RefRO<NfePlayerInput>, RefRW<NfePlayerState>, RefRO<NfePlayerLives>>()
                 .WithAll<Simulate>())
             {
+                if (lives.ValueRO.IsDead == 1 || lives.ValueRO.Lives <= 0)
+                {
+                    continue;
+                }
+
                 if (!input.ValueRO.PowerUp.IsSet) continue;
                 Entity rpc = ecb.CreateEntity();
                 ecb.AddComponent(rpc, new NfePowerUpResultRpc

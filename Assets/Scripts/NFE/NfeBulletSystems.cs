@@ -25,6 +25,31 @@ namespace NetworkingLab.NFE
             float deltaTime = SystemAPI.Time.DeltaTime;
             EntityCommandBuffer ecb = new(Allocator.Temp);
 
+            if (!SystemAPI.HasSingleton<NfeGameState>())
+            {
+                Entity gameState = ecb.CreateEntity();
+                ecb.AddComponent(gameState, new NfeGameState
+                {
+                    GameOver = 0,
+                    WinnerPlayerNumber = 0
+                });
+                ecb.Playback(state.EntityManager);
+                ecb.Dispose();
+                return;
+            }
+
+            RefRW<NfeGameState> gameStateRef = SystemAPI.GetSingletonRW<NfeGameState>();
+            if (gameStateRef.ValueRO.GameOver == 1)
+            {
+                ecb.Dispose();
+                return;
+            }
+
+            ComponentLookup<NfePlayerLives> livesLookup = state.GetComponentLookup<NfePlayerLives>(false);
+            livesLookup.Update(ref state);
+            ComponentLookup<NfePlayerState> playerStateLookup = state.GetComponentLookup<NfePlayerState>(true);
+            playerStateLookup.Update(ref state);
+
             foreach (var (bullet, entity) in SystemAPI
                 .Query<RefRW<NfeBulletState>>()
                 .WithAll<NfeBulletTag, Simulate>()
@@ -44,21 +69,60 @@ namespace NetworkingLab.NFE
                 }
 
                 float2 flat = new float2(position.x, position.z);
-                foreach (var player in SystemAPI.Query<RefRO<NfePlayerState>>().WithAll<NfePlayerTag>())
+                foreach (var playerPair in SystemAPI.Query<RefRO<NfePlayerState>, RefRW<NfePlayerLives>>().WithAll<NfePlayerTag>())
                 {
-                    if (player.ValueRO.PlayerNumber == bullet.ValueRO.OwnerPlayerNumber) continue;
-                    if (math.distancesq(player.ValueRO.Position, flat) > HitRadiusXz * HitRadiusXz) continue;
+                    if (playerPair.Item1.ValueRO.PlayerNumber == bullet.ValueRO.OwnerPlayerNumber) continue;
+                    if (playerPair.Item2.ValueRO.IsDead == 1) continue;
+                    if (math.distancesq(playerPair.Item1.ValueRO.Position, flat) > HitRadiusXz * HitRadiusXz) continue;
+
+                    int victimNumber = playerPair.Item1.ValueRO.PlayerNumber;
+                    int newLives = playerPair.Item2.ValueRO.Lives - 1;
+                    if (newLives < 0) newLives = 0;
+                    playerPair.Item2.ValueRW.Lives = newLives;
+                    if (newLives <= 0)
+                    {
+                        playerPair.Item2.ValueRW.IsDead = 1;
+                    }
 
                     Entity rpc = ecb.CreateEntity();
                     ecb.AddComponent(rpc, new NfePlayerHitRpc
                     {
-                        VictimPlayerNumber = player.ValueRO.PlayerNumber
+                        VictimPlayerNumber = victimNumber
                     });
                     ecb.AddComponent(rpc, new SendRpcCommandRequest
                     {
                         TargetConnection = Entity.Null
                     });
                     ecb.DestroyEntity(entity);
+
+                    // Check win condition
+                    int aliveCount = 0;
+                    int lastAlive = 0;
+                    foreach (var p in SystemAPI.Query<RefRO<NfePlayerState>, RefRO<NfePlayerLives>>().WithAll<NfePlayerTag>())
+                    {
+                        if (p.Item2.ValueRO.IsDead == 0 && p.Item2.ValueRO.Lives > 0)
+                        {
+                            aliveCount++;
+                            lastAlive = p.Item1.ValueRO.PlayerNumber;
+                        }
+                    }
+
+                    if (aliveCount <= 1)
+                    {
+                        gameStateRef.ValueRW.GameOver = 1;
+                        gameStateRef.ValueRW.WinnerPlayerNumber = aliveCount == 1 ? lastAlive : 0;
+                        Entity overRpc = ecb.CreateEntity();
+                        ecb.AddComponent(overRpc, new NfeGameOverRpc
+                        {
+                            WinnerPlayerNumber = gameStateRef.ValueRW.WinnerPlayerNumber
+                        });
+                        ecb.AddComponent(overRpc, new SendRpcCommandRequest
+                        {
+                            TargetConnection = Entity.Null
+                        });
+                        // Do not touch entity buffers/LinkedEntityGroup here; just mark game over
+                    }
+
                     break;
                 }
             }

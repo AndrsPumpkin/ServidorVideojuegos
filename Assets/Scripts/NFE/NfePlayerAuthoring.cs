@@ -13,6 +13,7 @@ namespace NetworkingLab.NFE
                 AddComponent<NfePlayerTag>(entity);
                 AddComponent<NfePlayerState>(entity);
                 AddComponent<NfePlayerInput>(entity);
+                AddComponent<NfePlayerLives>(entity);
             }
         }
     }

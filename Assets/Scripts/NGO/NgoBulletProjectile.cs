@@ -41,7 +41,7 @@ namespace NetworkingLab.NGO
                 NgoPlayerNetwork victim = overlaps[index].GetComponentInParent<NgoPlayerNetwork>();
                 if (victim == null || !victim.IsSpawned) continue;
                 if (victim.PlayerNumber == ownerNumber) continue;
-                victim.FlashHitRpc();
+                victim.ServerRegisterHit();
                 Despawn();
                 return;
             }

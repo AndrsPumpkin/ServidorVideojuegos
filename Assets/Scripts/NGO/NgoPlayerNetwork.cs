@@ -1,48 +1,73 @@
 using System.Collections;
 using System.Collections.Generic;
 using NetworkingLab.PowerUp;
+using NetworkingLab.UI;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 namespace NetworkingLab.NGO
 {
-    /// <summary>NGO starter: identity and ownership are ready; students complete gameplay networking.</summary>
+    /// <summary>NGO player: identity, owner input, authoritative movement, PowerUp and the shared lives system.</summary>
     public sealed class NgoPlayerNetwork : NetworkBehaviour
     {
-        private static int nextPlayerNumber;
-        [SerializeField] private InputActionAsset inputActions;
-        [SerializeField] private string actionMapName = "Player 1";
-        [SerializeField] private TextMesh playerLabel;
-        [SerializeField, Min(0f)] private float moveSpeed = 5f;
-        [SerializeField, Min(1f)] private float turnSpeed = 720f;
-        [SerializeField] private Vector2 horizontalBounds = new(10.5f, 7.5f);
-        [SerializeField] private GameObject bulletPrefab;
-        [SerializeField, Min(0f)] private float fireCooldown = 0.3f;
-        [SerializeField] private float muzzleSideOffset = 0.6f;
-        [SerializeField] private float muzzleHeightOffset = 1.5f;
-        [SerializeField, Min(0f)] private float flashDuration = 0.15f;
-
         private static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
         private static readonly Color HitEmission = new Color(1f, 0f, 0f) * 3f;
         private const string EmissionKeyword = "_EMISSION";
 
-        private readonly NetworkVariable<int> playerNumber = new(0,
-            NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+        private static int nextPlayerNumber;
+        private static readonly List<NgoPlayerNetwork> allPlayers = new();
+        private static bool gameOver;
+        private static int winnerNumber;
+
+        [SerializeField] private InputActionAsset inputActions;
+        [SerializeField] private string actionMapName = "Player 1";
+        [SerializeField] private Renderer bodyRenderer;
+        [SerializeField] private TextMesh playerLabel;
+        [SerializeField, Min(0f)] private float moveSpeed = 5f;
+        [SerializeField, Min(0f)] private float turnSpeed = 720f;
+        [SerializeField] private Vector2 horizontalBounds = new(10.5f, 7.5f);
+        [SerializeField] private GameObject bulletPrefab;
+        [SerializeField, Min(0f)] private float fireCooldown = 0.3f;
+        [SerializeField, Min(0f)] private float muzzleSideOffset = 0.6f;
+        [SerializeField, Min(0f)] private float muzzleHeightOffset = 1.5f;
+        [SerializeField, Min(0f)] private float flashDuration = 0.15f;
+
+        private readonly NetworkVariable<int> playerNumber = new NetworkVariable<int>(0,
+            NetworkVariableReadPermission.Everyone,
+            NetworkVariableWritePermission.Server);
+
+        private readonly NetworkVariable<int> lives = new NetworkVariable<int>(3,
+            NetworkVariableReadPermission.Everyone,
+            NetworkVariableWritePermission.Server);
+
+        private readonly NetworkVariable<bool> isDead = new NetworkVariable<bool>(false,
+            NetworkVariableReadPermission.Everyone,
+            NetworkVariableWritePermission.Server);
+
         private InputActionMap actionMap;
         private InputAction moveAction;
         private InputAction powerUpAction;
         private Vector2 pendingServerInput;
         private float nextFireTime;
         private Coroutine flashRoutine;
+        private bool inputRegistered;
 
         public int PlayerNumber => playerNumber.Value;
-        public static void ResetSequence() => nextPlayerNumber = 0;
+
+        public static void ResetSequence()
+        {
+            nextPlayerNumber = 0;
+            allPlayers.Clear();
+            gameOver = false;
+            winnerNumber = 0;
+        }
 
         public void Configure(InputActionAsset actions, string mapName, Renderer renderer, TextMesh label, float speed, Vector2 bounds, GameObject bullet = null)
         {
             inputActions = actions;
             actionMapName = mapName;
+            bodyRenderer = renderer;
             playerLabel = label;
             moveSpeed = speed;
             horizontalBounds = bounds;
@@ -51,42 +76,123 @@ namespace NetworkingLab.NGO
 
         public override void OnNetworkSpawn()
         {
-            playerNumber.OnValueChanged += OnPlayerNumberChanged;
             if (IsServer)
             {
                 int assigned = ++nextPlayerNumber;
                 playerNumber.Value = assigned;
                 transform.position = SpawnPosition(assigned);
+                lives.Value = 3;
+                isDead.Value = false;
+                allPlayers.Add(this);
             }
-            ApplyIdentity(playerNumber.Value);
-            if (IsOwner && IsClient)
+            else
             {
-                ResolveInput();
-                powerUpAction.performed += OnPowerUpPerformed;
-                actionMap.Enable();
+                allPlayers.Add(this);
             }
+
+            ApplyIdentity(playerNumber.Value);
+
+            if (IsOwner)
+            {
+                if (PlayerLivesUI.Instance != null)
+                {
+                    PlayerLivesUI.Instance.SetLocalPlayer(playerNumber.Value);
+                    PlayerLivesUI.Instance.SetLives(lives.Value);
+                }
+
+                RegisterInput();
+            }
+
+            playerNumber.OnValueChanged += OnPlayerNumberChanged;
+            lives.OnValueChanged += OnLivesChanged;
         }
 
         public override void OnNetworkDespawn()
         {
             playerNumber.OnValueChanged -= OnPlayerNumberChanged;
-            if (powerUpAction != null) powerUpAction.performed -= OnPowerUpPerformed;
-            actionMap?.Disable();
+            lives.OnValueChanged -= OnLivesChanged;
+            allPlayers.Remove(this);
+
+            if (flashRoutine != null)
+            {
+                StopCoroutine(flashRoutine);
+                flashRoutine = null;
+                RestoreEmission();
+            }
+
+            if (IsOwner)
+            {
+                UnregisterInput();
+            }
+        }
+
+        private void RegisterInput()
+        {
+            if (!Application.isPlaying || inputRegistered || inputActions == null || string.IsNullOrWhiteSpace(actionMapName))
+            {
+                return;
+            }
+
+            actionMap = inputActions.FindActionMap(actionMapName, true);
+            moveAction = actionMap.FindAction("Move", true);
+            powerUpAction = actionMap.FindAction("PowerUp", true);
+            powerUpAction.performed += OnPowerUpPerformed;
+            actionMap.Enable();
+            inputRegistered = true;
+        }
+
+        private void UnregisterInput()
+        {
+            if (!inputRegistered)
+            {
+                return;
+            }
+
+            powerUpAction.performed -= OnPowerUpPerformed;
+            actionMap.Disable();
+            inputRegistered = false;
         }
 
         private void Update()
         {
-            if (!IsOwner || !IsClient || moveAction == null) return;
-            Vector2 move = Vector2.ClampMagnitude(moveAction.ReadValue<Vector2>(), 1f);
-            ApplyFacing(move, Time.deltaTime);
+            if (!IsOwner || !IsSpawned)
+            {
+                return;
+            }
+
+            if (gameOver || isDead.Value || lives.Value <= 0)
+            {
+                return;
+            }
+
+            Vector2 move = moveAction.ReadValue<Vector2>();
             ApplyLocalPreview(move);
-            // STUDENT TODO NGO-01: send the owning client's movement input to the server.
-            // Suggested next step: call SubmitMoveRpc(move) and compare preview vs. authority.
+            ApplyFacing(move, Time.deltaTime);
             SubmitMoveRpc(move);
+        }
+
+        [Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable, InvokePermission = RpcInvokePermission.Owner)]
+        private void SubmitMoveRpc(Vector2 move)
+        {
+            if (!IsServer || gameOver || isDead.Value || lives.Value <= 0)
+            {
+                return;
+            }
+
+            pendingServerInput = Vector2.ClampMagnitude(move, 1f);
         }
 
         private void FixedUpdate()
         {
+            if (!IsServer || !IsSpawned)
+            {
+                return;
+            }
+
+            if (gameOver || isDead.Value || lives.Value <= 0)
+            {
+                return;
+            }
 
             Vector2 move = Vector2.ClampMagnitude(pendingServerInput, 1f);
             Vector3 next = transform.position +
@@ -95,35 +201,19 @@ namespace NetworkingLab.NGO
             next.z = Mathf.Clamp(next.z, -horizontalBounds.y, horizontalBounds.y);
             transform.position = next;
             ApplyFacing(move, Time.fixedDeltaTime);
-            // STUDENT TODO NGO-02: validate pendingServerInput and move only on the server.
-            // NetworkTransform is already attached and will replicate the authoritative result.
-        }
-
-        private void LateUpdate()
-        {
-            if (playerLabel != null)
-            {
-                playerLabel.transform.rotation = Quaternion.Euler(52f, 0f, 0f);
-            }
-        }
-
-        [Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable, InvokePermission = RpcInvokePermission.Owner)]
-        private void SubmitMoveRpc(Vector2 move)
-        {
-            pendingServerInput = Vector2.ClampMagnitude(move, 1f);
         }
 
         private void OnPowerUpPerformed(InputAction.CallbackContext context)
         {
             RequestPowerUpRpc();
-            // STUDENT TODO NGO-03: replace this local preview with a Server RPC that validates
-            // the request and a Client RPC that raises PowerUpEvents on all clients.
         }
 
         [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Owner)]
         private void RequestPowerUpRpc()
         {
-            if (!IsSpawned || playerNumber.Value <= 0) return;
+            if (!IsServer) return;
+            if (gameOver || isDead.Value) return;
+            if (playerNumber.Value <= 0) return;
             AnnouncePowerUpRpc(playerNumber.Value);
             TryFire();
         }
@@ -187,6 +277,75 @@ namespace NetworkingLab.NGO
             flashRoutine = null;
         }
 
+        private void RestoreEmission()
+        {
+            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
+            {
+                if (playerLabel != null && renderer.gameObject == playerLabel.gameObject) continue;
+                renderer.material.SetColor(EmissionColorId, Color.black);
+                renderer.material.DisableKeyword(EmissionKeyword);
+            }
+        }
+
+        private void OnPlayerNumberChanged(int oldValue, int newValue)
+        {
+            ApplyIdentity(newValue);
+            if (IsOwner && PlayerLivesUI.Instance != null)
+            {
+                PlayerLivesUI.Instance.SetLocalPlayer(newValue);
+                PlayerLivesUI.Instance.SetLives(lives.Value);
+            }
+        }
+
+        private void OnLivesChanged(int oldValue, int newValue)
+        {
+            if (IsOwner && PlayerLivesUI.Instance != null)
+            {
+                PlayerLivesUI.Instance.SetLives(newValue);
+            }
+        }
+
+        public void ServerRegisterHit()
+        {
+            if (!IsServer) return;
+            if (gameOver || isDead.Value) return;
+
+            int newLives = lives.Value - 1;
+            if (newLives < 0) newLives = 0;
+            lives.Value = newLives;
+            FlashHitRpc();
+
+            if (newLives <= 0)
+            {
+                isDead.Value = true;
+            }
+
+            int alive = 0;
+            int lastAlive = 0;
+            for (int index = 0; index < allPlayers.Count; index++)
+            {
+                NgoPlayerNetwork player = allPlayers[index];
+                if (player == null || player.isDead.Value || player.lives.Value <= 0) continue;
+                alive++;
+                lastAlive = player.playerNumber.Value;
+            }
+
+            if (alive <= 1)
+            {
+                gameOver = true;
+                winnerNumber = alive == 1 ? lastAlive : 0;
+                GameOverRpc(winnerNumber);
+            }
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void GameOverRpc(int winner)
+        {
+            if (PlayerLivesUI.Instance != null)
+            {
+                PlayerLivesUI.Instance.ShowWinner(winner);
+            }
+        }
 
         private void ApplyFacing(Vector2 move, float deltaTime)
         {
@@ -206,15 +365,6 @@ namespace NetworkingLab.NGO
             next.z = Mathf.Clamp(next.z, -horizontalBounds.y, horizontalBounds.y);
             transform.position = next;
         }
-
-        private void ResolveInput()
-        {
-            actionMap = inputActions.FindActionMap(actionMapName, true);
-            moveAction = actionMap.FindAction("Move", true);
-            powerUpAction = actionMap.FindAction("PowerUp", true);
-        }
-
-        private void OnPlayerNumberChanged(int previous, int current) => ApplyIdentity(current);
 
         private void ApplyIdentity(int number)
         {
