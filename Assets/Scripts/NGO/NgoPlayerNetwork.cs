@@ -19,6 +19,7 @@ namespace NetworkingLab.NGO
         private static readonly List<NgoPlayerNetwork> allPlayers = new();
         private static bool gameOver;
         private static int winnerNumber;
+        private static Coroutine restartRoutine;
 
         [SerializeField] private InputActionAsset inputActions;
         [SerializeField] private string actionMapName = "Player 1";
@@ -32,6 +33,7 @@ namespace NetworkingLab.NGO
         [SerializeField, Min(0f)] private float muzzleSideOffset = 0.6f;
         [SerializeField, Min(0f)] private float muzzleHeightOffset = 1.5f;
         [SerializeField, Min(0f)] private float flashDuration = 0.15f;
+        [SerializeField, Min(1f)] private float roundRestartDelay = 4f;
 
         private readonly NetworkVariable<int> playerNumber = new NetworkVariable<int>(0,
             NetworkVariableReadPermission.Everyone,
@@ -61,6 +63,7 @@ namespace NetworkingLab.NGO
             allPlayers.Clear();
             gameOver = false;
             winnerNumber = 0;
+            restartRoutine = null;
         }
 
         public void Configure(InputActionAsset actions, string mapName, Renderer renderer, TextMesh label, float speed, Vector2 bounds, GameObject bullet = null)
@@ -335,15 +338,72 @@ namespace NetworkingLab.NGO
                 gameOver = true;
                 winnerNumber = alive == 1 ? lastAlive : 0;
                 GameOverRpc(winnerNumber);
+                if (restartRoutine == null)
+                {
+                    restartRoutine = StartCoroutine(ServerRestartRoundRoutine());
+                }
             }
         }
 
         [Rpc(SendTo.ClientsAndHost)]
         private void GameOverRpc(int winner)
         {
+            gameOver = true;
+            winnerNumber = winner;
             if (PlayerLivesUI.Instance != null)
             {
                 PlayerLivesUI.Instance.ShowWinner(winner);
+            }
+        }
+
+        private IEnumerator ServerRestartRoundRoutine()
+        {
+            yield return new WaitForSeconds(roundRestartDelay);
+
+            // 1. Despawn active bullets on server
+            NgoBulletProjectile[] bullets = FindObjectsByType<NgoBulletProjectile>(FindObjectsInactive.Exclude);
+            for (int i = 0; i < bullets.Length; i++)
+            {
+                if (bullets[i] != null && bullets[i].NetworkObject != null && bullets[i].NetworkObject.IsSpawned)
+                {
+                    bullets[i].NetworkObject.Despawn(true);
+                }
+            }
+
+            // 2. Restore all players
+            for (int index = 0; index < allPlayers.Count; index++)
+            {
+                NgoPlayerNetwork player = allPlayers[index];
+                if (player == null || !player.IsSpawned) continue;
+
+                player.lives.Value = 3;
+                player.isDead.Value = false;
+                player.transform.position = SpawnPosition(player.playerNumber.Value);
+                player.transform.rotation = Quaternion.identity;
+                player.pendingServerInput = Vector2.zero;
+                player.nextFireTime = 0f;
+            }
+
+            // 3. Reset game-over flags
+            gameOver = false;
+            winnerNumber = 0;
+            restartRoutine = null;
+
+            // 4. Notify clients and host to reset UI
+            RoundRestartedRpc();
+        }
+
+        [Rpc(SendTo.ClientsAndHost)]
+        private void RoundRestartedRpc()
+        {
+            gameOver = false;
+            winnerNumber = 0;
+
+            if (PlayerLivesUI.Instance != null)
+            {
+                PlayerLivesUI.Instance.ResetRound();
+                PlayerLivesUI.Instance.SetLocalPlayer(playerNumber.Value);
+                PlayerLivesUI.Instance.SetLives(lives.Value);
             }
         }
 

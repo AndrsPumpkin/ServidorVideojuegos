@@ -15,11 +15,13 @@ namespace NetworkingLab.UI
         [SerializeField] private Text winnerLabel;
         [SerializeField, Min(1)] private int livesPerPlayer = 3;
         [SerializeField, Min(1f)] private float restartDelay = 5f;
+        [SerializeField] private bool autoReloadScene = false;
 
         private const int MaxPlayers = 2;
 
         private readonly int[] remaining = new int[MaxPlayers];
         private readonly int[] lostHearts = new int[MaxPlayers];
+        private Sprite[] defaultHeartSprites;
 
         private int localPlayerNumber = 0;
         private int currentLives = 3;
@@ -39,6 +41,18 @@ namespace NetworkingLab.UI
             Instance = this;
             Time.timeScale = 1f;
             GameOver = false;
+
+            if (hearts != null)
+            {
+                defaultHeartSprites = new Sprite[hearts.Length];
+                for (int i = 0; i < hearts.Length; i++)
+                {
+                    if (hearts[i] != null)
+                    {
+                        defaultHeartSprites[i] = hearts[i].sprite;
+                    }
+                }
+            }
 
             for (int index = 0; index < MaxPlayers; index++)
             {
@@ -98,6 +112,10 @@ namespace NetworkingLab.UI
                     if (hearts[i] != null)
                     {
                         hearts[i].enabled = true;
+                        if (defaultHeartSprites != null && i < defaultHeartSprites.Length && defaultHeartSprites[i] != null)
+                        {
+                            hearts[i].sprite = defaultHeartSprites[i];
+                        }
                     }
                 }
             }
@@ -111,6 +129,27 @@ namespace NetworkingLab.UI
                     if (playerHearts[i] != null) playerHearts[i].enabled = true;
                 }
             }
+        }
+
+        public void ResetRound()
+        {
+            GameOver = false;
+            Time.timeScale = 1f;
+
+            if (winnerLabel != null)
+            {
+                winnerLabel.text = string.Empty;
+                winnerLabel.gameObject.SetActive(false);
+            }
+
+            for (int index = 0; index < MaxPlayers; index++)
+            {
+                remaining[index] = livesPerPlayer;
+                lostHearts[index] = 0;
+            }
+
+            currentLives = livesPerPlayer;
+            ResetHearts();
         }
 
         private void OnDestroy()
@@ -200,8 +239,11 @@ namespace NetworkingLab.UI
                 winnerLabel.gameObject.SetActive(true);
             }
 
-            Time.timeScale = 0f;
-            StartCoroutine(RestartAfterDelay());
+            if (autoReloadScene)
+            {
+                Time.timeScale = 0f;
+                StartCoroutine(RestartAfterDelay());
+            }
         }
 
         private IEnumerator RestartAfterDelay()
@@ -209,8 +251,6 @@ namespace NetworkingLab.UI
             yield return new WaitForSecondsRealtime(restartDelay);
             Time.timeScale = 1f;
             GameOver = false;
-            // Go back to start - reload scene or just leave as is; per user request, go to start state
-            // Reload current scene will reset; but better to just unpause and let them reconnect
             SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
         }
     }
